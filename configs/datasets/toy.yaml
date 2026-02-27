@@ -1,0 +1,8 @@
+name: toy
+plugin: toy
+split: test
+instances:
+  - instance_id: toy-1
+    repo_id: toy_repo
+    base_commit: toy-base
+    prompt: "Fix add(a, b) so tests pass."

@@ -1,0 +1,5 @@
+name: bandit
+plugin: static_bandit
+command: ["bandit", "-r", ".", "-f", "json"]
+missing_tool_behavior: skip
+max_findings: 0

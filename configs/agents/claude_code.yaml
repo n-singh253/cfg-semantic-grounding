@@ -1,0 +1,6 @@
+name: claude_code
+plugin: claude_code
+command: ["claude-code", "--repo", "{repo_path}", "--prompt", "{prompt}"]
+output_mode: stdout
+missing_tool_behavior: skip
+timeout_sec: 300

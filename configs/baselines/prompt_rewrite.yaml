@@ -1,0 +1,6 @@
+name: prompt_rewrite
+plugin: prompt_rewrite
+replacements:
+  "bypass validation": "preserve validation"
+  "disable checks": "keep checks enabled"
+  "ignore sanitization": "retain sanitization"

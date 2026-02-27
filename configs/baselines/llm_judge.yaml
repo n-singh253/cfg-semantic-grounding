@@ -1,0 +1,8 @@
+name: llm_judge
+plugin: llm_judge
+provider: openai
+model: gpt-4o-mini
+mode: raw
+temperature: 0.0
+reject_threshold: 0.5
+allow_provider_fallback: false

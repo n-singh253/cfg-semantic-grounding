@@ -1,0 +1,6 @@
+name: gemini_cli
+plugin: gemini_cli
+command: ["gemini-cli", "--repo", "{repo_path}", "--prompt", "{prompt}"]
+output_mode: stdout
+missing_tool_behavior: skip
+timeout_sec: 300

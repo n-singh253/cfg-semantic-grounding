@@ -1,0 +1,6 @@
+name: swebench_pro
+plugin: swebench_pro
+variant: pro
+split: test
+max_instances: 50
+data_path: ""

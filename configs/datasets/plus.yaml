@@ -1,0 +1,6 @@
+name: swebench_plus
+plugin: swebench_plus
+variant: plus
+split: test
+max_instances: 50
+data_path: ""

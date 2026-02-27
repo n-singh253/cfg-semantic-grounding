@@ -1,0 +1,31 @@
+name: structural_misalignment
+plugin: structural_misalignment
+mode: task8_combined
+model_path: data/models/structural_misalignment/task8_combined
+model_paths:
+  task8_structure_only: data/models/structural_misalignment/task8_combined
+  task8_similarity_only: data/models/structural_misalignment/task8_combined
+  task8_combined: data/models/structural_misalignment/task8_combined
+  task7_full_universal: data/models/structural_misalignment/task8_combined
+  task7_severity_only_universal: data/models/structural_misalignment/task8_combined
+  task7_no_security: data/models/structural_misalignment/task8_combined
+threshold: 0.5
+decision_policy: reject_if_score_ge_threshold
+severity_mode: universal
+enable_marker_debug_mode: false
+allow_hunk_fallback: true
+allow_hunk_fallback_non_toy: true
+mask_tokens: true
+comment_stripping_mode: python_tokenize
+allow_provider_fallback: false
+allow_provider_fallback_on_toy: true
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  temperature: 0.2
+  max_retries: 2
+  backoff_sec: 1.0
+  allow_provider_fallback: false
+  subtasks_system_prompt: |
+    You are helping decompose software bug-fix tasks into generic subtasks.
+    Return concise one-line subtasks as JSON array of strings.

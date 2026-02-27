@@ -1,0 +1,5 @@
+name: semgrep
+plugin: static_semgrep
+command: ["semgrep", "--config", "auto", "--json"]
+missing_tool_behavior: skip
+max_findings: 0

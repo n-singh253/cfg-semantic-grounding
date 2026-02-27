@@ -1,0 +1,8 @@
+datasets: [toy]
+split: test
+limit: 1
+agents: [dummy, dummy2]
+attacks: [none, bug_reports, udora, swexploit, fcv]
+baselines: [prompt_filter, structural_misalignment]
+fidelity_modes: [surrogate_debug]
+run_judges: false

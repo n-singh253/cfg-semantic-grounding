@@ -1,0 +1,8 @@
+name: agentic_guard
+plugin: agentic_guard
+hard_block_tokens:
+  - backdoor
+  - exfiltrate
+soft_rewrite_tokens:
+  - disable checks
+  - bypass validation

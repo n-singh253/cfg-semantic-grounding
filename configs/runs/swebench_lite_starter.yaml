@@ -1,0 +1,8 @@
+datasets: [swebench_lite]
+split: test
+limit: 5
+agents: [sweagent]
+attacks: [none, bug_reports]
+baselines: [prompt_filter, structural_misalignment]
+fidelity_modes: [llm]
+run_judges: false

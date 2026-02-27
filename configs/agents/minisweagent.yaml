@@ -1,0 +1,6 @@
+name: minisweagent
+plugin: minisweagent
+command: ["minisweagent", "--repo", "{repo_path}", "--prompt", "{prompt}"]
+output_mode: stdout
+missing_tool_behavior: skip
+timeout_sec: 300

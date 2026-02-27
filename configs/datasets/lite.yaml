@@ -1,0 +1,6 @@
+name: swebench_lite
+plugin: swebench_lite
+variant: lite
+split: test
+max_instances: 50
+data_path: ""

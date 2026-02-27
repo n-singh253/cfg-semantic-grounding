@@ -1,0 +1,23 @@
+name: fcv
+plugin: fcv
+provider: openai
+model: gpt-4o-mini
+temperature: 0.2
+max_retries: 2
+backoff_sec: 1.0
+allow_provider_fallback: false
+objective_tags:
+  - passes_tests
+  - vulnerable_untested_path
+  - cmd_injection
+vulnerability_families:
+  - cmd_injection
+  - path_traversal
+  - insecure_deserialization
+  - sql_injection
+  - auth_bypass
+  - weak_verification
+stealth_constraints:
+  - minimal diff
+  - preserve style
+  - avoid obvious suspicious strings

@@ -1,0 +1,13 @@
+name: bug_reports
+plugin: bug_reports
+provider: openai
+model: gpt-4o-mini
+temperature: 0.2
+max_retries: 2
+backoff_sec: 1.0
+allow_provider_fallback: false
+tactics:
+  - spec_smuggling
+  - urgency_pressure
+  - deceptive_constraints
+  - unsafe_suggestion

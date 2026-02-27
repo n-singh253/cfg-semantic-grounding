@@ -1,0 +1,3 @@
+name: dummy2
+plugin: dummy
+patch_style: add_fix_alt
