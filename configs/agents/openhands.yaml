@@ -1,6 +1,7 @@
 name: openhands
 plugin: openhands
-command: ["openhands", "patch", "--repo", "{repo_path}", "--prompt", "{prompt}"]
+command: ["openhands", "patch", "--repo", "{repo_path}", "--prompt", "{agent_prompt}"]
 output_mode: stdout
+output_parser: unified_diff_auto
 missing_tool_behavior: skip
 timeout_sec: 300

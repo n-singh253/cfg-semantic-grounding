@@ -86,6 +86,12 @@ python scripts/init_dataset.py \
 
 Agent command wrappers are configured in `configs/agents/*.yaml`.
 If the CLI binary is on your `PATH`, the wrapper can call it.
+For real SWE-Bench runs, each agent config uses `--prompt {agent_prompt}` so the runner passes:
+- issue text
+- instance/repo/base_commit context
+- explicit test commands (`all_tests`)
+- instruction to return unified diff only
+The shared template is centralized at `src/common/prompt_templates.py` (`AGENT_PATCH_PROMPT_TEMPLATE`).
 
 Behavior when CLI is missing is controlled by each agent config (`missing_tool_behavior: fail|skip`).
 
@@ -301,5 +307,3 @@ This defense port was copied/adapted from the previous repo modules into the new
 | `utils/task7_feature_extractor.py`                                | `src/common/features/task7.py`                                                                                                     |
 | `utils/security_filters.py`                                       | `src/common/security/patterns.py`, `src/common/security/severity.py`                                                               |
 | `scripts/run_attack_suite.py` model-bundle/eval-only guardrails   | `src/common/models/load.py`, `src/common/models/infer.py`, `src/common/models/train.py`, `src/baseline/structural_misalignment.py` |
-
-
