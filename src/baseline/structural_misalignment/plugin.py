@@ -9,33 +9,38 @@ from src.baseline.base import BaseDefense
 from src.baseline.registry import register_baseline
 from src.common.artifacts import write_hashed_json_artifact
 from src.common.artifact_store import atomic_write_json
-from src.common.cfg.diff import compute_cfg_diff_for_patch
-from src.common.cfg.stats import compute_cfg_stats
-from src.common.features.schema import (
+from src.baseline.structural_misalignment.cfg.diff import compute_cfg_diff_for_patch
+from src.baseline.structural_misalignment.cfg.stats import compute_cfg_stats
+from src.baseline.structural_misalignment.features.schema import (
     FEATURE_SCHEMA_VERSION,
     STRUCTURAL_FAMILY_MODES,
     UNIVERSAL_FAMILY_MODES,
     feature_set_name,
-    is_legacy_mode,
-    normalize_structural_mode,
+    normalize_mode,
 )
-from src.common.features.structural_features import (
+from src.baseline.structural_misalignment.features.structural_features import (
     SIMILARITY_ONLY_FEATURES,
     STRUCTURAL_COMBINED_FEATURES,
     STRUCTURAL_ONLY_FEATURES,
     compute_structural_feature_row,
 )
-from src.common.features.universal_features import (
+from src.baseline.structural_misalignment.features.universal_features import (
     columns_for_universal_mode,
     extract_universal_features,
     select_feature_subset,
 )
-from src.common.grounding.link import link_subtasks_to_nodes
-from src.common.grounding.subtasks import DEFAULT_SYSTEM_PROMPT, generate_subtasks
+from src.baseline.structural_misalignment.grounding.link import link_subtasks_to_nodes
+from src.baseline.structural_misalignment.grounding.subtasks import (
+    DEFAULT_SYSTEM_PROMPT,
+    generate_subtasks,
+)
 from src.common.hashing import sha256_text
-from src.common.models.infer import decide_from_policy, predict_reject_score
-from src.common.models.load import load_model_bundle
-from src.common.security.severity import analyze_cfg_diff_nodes
+from src.baseline.structural_misalignment.models.infer import (
+    decide_from_policy,
+    predict_reject_score,
+)
+from src.baseline.structural_misalignment.models.load import load_model_bundle
+from src.baseline.structural_misalignment.security.severity import analyze_cfg_diff_nodes
 
 
 class StructuralMisalignmentDefense(BaseDefense):
@@ -49,15 +54,12 @@ class StructuralMisalignmentDefense(BaseDefense):
         repo_code: Dict[str, Any],
     ):
         _ = all_tests
-        mode_input = str(self.config.get("mode", "structural_combined")).strip()
-        mode_alias_applied = is_legacy_mode(mode_input)
+        mode = str(self.config.get("mode", "structural_combined")).strip()
         try:
-            mode = normalize_structural_mode(mode_input)
+            mode = normalize_mode(mode)
         except Exception as exc:
             self.last_signals = {
                 "mode": "unknown",
-                "mode_input": mode_input,
-                "mode_alias_applied": mode_alias_applied,
                 "decision_policy": str(self.config.get("decision_policy", "reject_if_score_ge_threshold")).strip(),
                 "threshold": float(self.config.get("threshold", 0.5)),
                 "failure_flags": {
@@ -80,49 +82,15 @@ class StructuralMisalignmentDefense(BaseDefense):
         if isinstance(path_map, dict):
             if mode in path_map:
                 model_path = str(path_map.get(mode, "")).strip()
-            elif mode_input in path_map:
-                model_path = str(path_map.get(mode_input, "")).strip()
-            else:
-                for key, value in path_map.items():
-                    if not isinstance(key, str):
-                        continue
-                    try:
-                        if normalize_structural_mode(key) == mode:
-                            model_path = str(value).strip()
-                            break
-                    except Exception:
-                        continue
         if not model_path:
             model_path = str(self.config.get("model_path", "")).strip()
-
-        # Keep canonical naming as source-of-truth, but allow legacy model dirs.
-        model_path_fallback_applied = False
-        if model_path:
-            model_path_obj = Path(model_path)
-            if not model_path_obj.is_absolute():
-                model_path_obj = (Path.cwd() / model_path_obj).resolve()
-            if not model_path_obj.exists():
-                fallback_candidates = []
-                path_text = str(model_path_obj)
-                if "/structural_combined" in path_text:
-                    fallback_candidates.append(Path(path_text.replace("/structural_combined", "/task8_combined")))
-                if "/task8_combined" in path_text:
-                    fallback_candidates.append(Path(path_text.replace("/task8_combined", "/structural_combined")))
-                for candidate in fallback_candidates:
-                    if candidate.exists():
-                        model_path = str(candidate)
-                        model_path_fallback_applied = True
-                        break
 
         severity_mode = str(self.config.get("severity_mode", "universal")).strip().lower()
         if not model_path:
             self.last_signals = {
                 "mode": mode,
-                "mode_input": mode_input,
-                "mode_alias_applied": mode_alias_applied,
                 "decision_policy": decision_policy,
                 "threshold": threshold,
-                "model_path_fallback_applied": model_path_fallback_applied,
                 "failure_flags": {
                     "cfg_fail": False,
                     "subtasks_fail": False,
@@ -159,8 +127,6 @@ class StructuralMisalignmentDefense(BaseDefense):
                 {
                     "stage_completed": stage_status,
                     "mode": mode,
-                    "mode_input": mode_input,
-                    "mode_alias_applied": mode_alias_applied,
                     "config_hash": self.baseline_config_hash,
                 },
             )
@@ -357,16 +323,12 @@ class StructuralMisalignmentDefense(BaseDefense):
             canonical_feature_set = feature_set_name(mode)
             features_payload = {
                 "mode": mode,
-                "mode_input": mode_input,
-                "mode_alias_applied": mode_alias_applied,
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "feature_set_name": canonical_feature_set,
                 "selected_columns": selected_cols,
                 "feature_vector": feature_row,
                 "model_feature_list": bundle.feature_list,
             }
-            if mode_alias_applied:
-                features_payload["legacy_feature_set_name"] = mode_input
 
             features_path = write_hashed_json_artifact(
                 defense_root / "features.json",
@@ -422,14 +384,10 @@ class StructuralMisalignmentDefense(BaseDefense):
                     "decision_policy": decision_policy,
                     "accepted": bool(accepted),
                     "mode": mode,
-                    "mode_input": mode_input,
-                    "mode_alias_applied": mode_alias_applied,
                     "feature_set_name": canonical_feature_set,
-                    "legacy_feature_set_name": mode_input if mode_alias_applied else "",
                     "missing_feature_columns_filled_zero": inference.missing_columns_filled_zero,
                     "model_metadata": bundle.metadata,
                     "model_dir": str(bundle.model_dir),
-                    "model_path_fallback_applied": model_path_fallback_applied,
                 },
                 config_hash=self.baseline_config_hash,
                 refs={
@@ -440,19 +398,15 @@ class StructuralMisalignmentDefense(BaseDefense):
 
             self.last_signals = {
                 "mode": mode,
-                "mode_input": mode_input,
-                "mode_alias_applied": mode_alias_applied,
                 "decision_policy": decision_policy,
                 "model_score": float(inference.score),
                 "threshold": threshold,
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "feature_set_name": canonical_feature_set,
-                "legacy_feature_set_name": mode_input if mode_alias_applied else "",
                 "eval_only_no_refit_guard": True,
                 "missing_feature_columns_filled_zero": inference.missing_columns_filled_zero,
                 "severity_mode": severity_mode,
                 "model_path": str(model_path),
-                "model_path_fallback_applied": model_path_fallback_applied,
                 "provider": provider,
                 "model": model,
                 "subtasks_prompt_hash": subtasks_meta.get("prompt_hash", ""),
@@ -501,21 +455,17 @@ class StructuralMisalignmentDefense(BaseDefense):
             persist_stage_status()
             self.last_signals = {
                 "mode": mode,
-                "mode_input": mode_input,
-                "mode_alias_applied": mode_alias_applied,
                 "decision_policy": decision_policy,
                 "threshold": threshold,
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "feature_set_name": feature_set_name(mode)
                 if mode in STRUCTURAL_FAMILY_MODES.union(UNIVERSAL_FAMILY_MODES)
                 else "unknown",
-                "legacy_feature_set_name": mode_input if mode_alias_applied else "",
                 "error": error_text,
                 "stage_failed": current_stage,
                 "stage_completed": stage_status,
                 "failure_flags": failure_flags,
                 "artifact_paths": artifact_paths,
-                "model_path_fallback_applied": model_path_fallback_applied,
             }
             return False
 

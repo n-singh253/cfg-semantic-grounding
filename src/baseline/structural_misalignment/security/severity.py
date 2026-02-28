@@ -7,7 +7,7 @@ import re
 import tokenize
 from typing import Any, Dict, List, Optional
 
-from src.common.security.patterns import BENIGN_PATTERNS, select_patterns
+from src.baseline.structural_misalignment.security.patterns import BENIGN_PATTERNS, select_patterns
 
 
 def _regex_strip_comments(text: str) -> str:

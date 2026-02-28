@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from src.common.grounding.schemas import parse_subtasks
+from src.baseline.structural_misalignment.grounding.schemas import parse_subtasks
 from src.common.llm import LLMClient
 
 

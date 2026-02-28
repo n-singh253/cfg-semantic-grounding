@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from src.common.cfg.build import build_cfg_for_files
+from src.baseline.structural_misalignment.cfg.build import build_cfg_for_files
 from src.common.diff import apply_unified_diff
 
 

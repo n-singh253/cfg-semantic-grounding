@@ -7,5 +7,5 @@ from src.baseline import (  # noqa: F401
     prompt_rewrite,
     static_bandit,
     static_semgrep,
-    structural_misalignment,
 )
+from src.baseline.structural_misalignment import plugin as structural_misalignment  # noqa: F401

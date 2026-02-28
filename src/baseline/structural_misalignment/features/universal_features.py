@@ -6,7 +6,7 @@ import math
 from collections import Counter
 from typing import Any, Dict, List, Tuple
 
-from src.common.features.schema import normalize_structural_mode
+from src.baseline.structural_misalignment.features.schema import normalize_mode
 
 # Stable feature order from old pipeline contract.
 FEATURE_COLUMNS = [
@@ -239,7 +239,7 @@ def is_security_feature(col: str) -> bool:
 
 
 def columns_for_universal_mode(mode: str) -> List[str]:
-    canonical_mode = normalize_structural_mode(mode)
+    canonical_mode = normalize_mode(mode)
     if canonical_mode == "severity_only_universal":
         return SEVERITY_ONLY_FEATURES_UNIVERSAL.copy()
     if canonical_mode == "no_security":
@@ -256,8 +256,3 @@ def select_feature_subset(feature_row: Dict[str, float], columns: List[str]) -> 
         resolved.append(col)
         selected[col] = float(feature_row.get(col, 0.0))
     return selected, resolved
-
-
-# Backward-compatible aliases for legacy imports.
-extract_task7_features = extract_universal_features
-columns_for_task7_mode = columns_for_universal_mode

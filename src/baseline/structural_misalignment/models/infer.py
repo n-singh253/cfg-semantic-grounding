@@ -7,7 +7,7 @@ from typing import Dict, List
 
 import numpy as np
 
-from src.common.models.load import ModelBundle
+from src.baseline.structural_misalignment.models.load import ModelBundle
 
 
 @dataclass

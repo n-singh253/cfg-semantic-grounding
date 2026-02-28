@@ -323,13 +323,6 @@ def compute_structural_feature_row(
     return {name: float(value) for name, value in base.items()}
 
 
-# Backward-compatible aliases for legacy imports.
-TASK8_STRUCTURE_ONLY_FEATURES = STRUCTURAL_ONLY_FEATURES
-TASK8_SIMILARITY_ONLY_FEATURES = SIMILARITY_ONLY_FEATURES
-TASK8_COMBINED_FEATURES = STRUCTURAL_COMBINED_FEATURES
-compute_task8_feature_row = compute_structural_feature_row
-
-
 def serialize_for_csv(subtasks: List[str], node_id_to_snippet: Dict[str, str], links: List[Dict[str, Any]]) -> Dict[str, str]:
     validate_links_schema(links)
     return {

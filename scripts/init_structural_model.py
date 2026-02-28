@@ -14,7 +14,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from src.common.features.structural_features import STRUCTURAL_COMBINED_FEATURES
+from src.baseline.structural_misalignment.features.structural_features import (
+    STRUCTURAL_COMBINED_FEATURES,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,11 +27,6 @@ def parse_args() -> argparse.Namespace:
         help="Output model bundle directory",
     )
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument(
-        "--write-legacy-alias",
-        action="store_true",
-        help="Also write a compatibility copy at data/models/structural_misalignment/task8_combined",
-    )
     return parser.parse_args()
 
 
@@ -73,7 +70,6 @@ def main() -> int:
         "feature_list": STRUCTURAL_COMBINED_FEATURES,
         "feature_schema_version": "v1",
         "feature_set_name": "structural_combined",
-        "legacy_feature_set_name": "task8_combined",
         "decision_policy_default": "reject_if_score_ge_threshold",
         "missing_value_policy": "fill_zero",
         "tfidf_fitted": True,
@@ -85,14 +81,6 @@ def main() -> int:
     }
     (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
-    if args.write_legacy_alias:
-        legacy_dir = out_dir.parent / "task8_combined"
-        legacy_dir.mkdir(parents=True, exist_ok=True)
-        for name in ["model.joblib", "imputer.joblib", "scaler.joblib", "tfidf_vectorizer.pkl", "metadata.json"]:
-            src = out_dir / name
-            dst = legacy_dir / name
-            if src.exists():
-                dst.write_bytes(src.read_bytes())
     print(f"[init-structural-model] wrote bundle to {out_dir}")
     return 0
 

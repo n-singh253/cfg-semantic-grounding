@@ -22,7 +22,7 @@ src/
   agent/       # patch-agent wrappers
   dataset/     # dataset adapters
   eval/        # runner + CLI
-  common/      # shared cfg/grounding/features/models/security/llm
+  common/      # shared utilities (llm, hashing, artifacts, subprocess, prompts)
 configs/
   datasets/ 
   agents/ 
@@ -239,20 +239,10 @@ Edit resolution:
 - structural metrics + optional similarity features
 - model inference with explicit `decision_policy`
 - canonical modes: `structural_only`, `similarity_only`, `structural_combined`, `full_universal`, `severity_only_universal`, `no_security`
+- implementation is self-contained under `src/baseline/structural_misalignment/` (`cfg/`, `grounding/`, `features/`, `models/`, `security/`, `plugin.py`)
 
 Default severity behavior is universal-only (`severity_mode: universal`).
 Dataset-marker patterns require explicit debug enablement.
-
-Legacy alias support:
-
-| Legacy mode | Canonical mode |
-| --- | --- |
-| `task8_structure_only` | `structural_only` |
-| `task8_similarity_only` | `similarity_only` |
-| `task8_combined` | `structural_combined` |
-| `task7_full_universal` | `full_universal` |
-| `task7_severity_only_universal` | `severity_only_universal` |
-| `task7_no_security` | `no_security` |
 
 Model artifact note:
 
@@ -310,11 +300,11 @@ This defense port was copied/adapted from the previous repo modules into the new
 
 | Old repo source                                                   | New repo destination                                                                                                               |
 | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `utils/cfg_extractor.py`                                          | `src/common/cfg/build.py`                                                                                                          |
-| `utils/cfg_diff.py`                                               | `src/common/cfg/diff.py`                                                                                                           |
-| `utils/cfg_grounding.py`                                          | `src/common/cfg/diff.py` + `src/common/grounding/*`                                                                                |
-| `utils/llm_clients.py` (subtasks/linking prompt/parsing behavior) | `src/common/grounding/subtasks.py`, `src/common/grounding/link.py`, `src/common/grounding/schemas.py`                              |
-| `utils/misalignment_features.py`                                  | `src/common/features/structural_features.py`                                                                                                     |
-| `utils/task7_feature_extractor.py`                                | `src/common/features/universal_features.py`                                                                                                     |
-| `utils/security_filters.py`                                       | `src/common/security/patterns.py`, `src/common/security/severity.py`                                                               |
-| `scripts/run_attack_suite.py` model-bundle/eval-only guardrails   | `src/common/models/load.py`, `src/common/models/infer.py`, `src/common/models/train.py`, `src/baseline/structural_misalignment.py` |
+| `utils/cfg_extractor.py`                                          | `src/baseline/structural_misalignment/cfg/build.py`                                                                                                          |
+| `utils/cfg_diff.py`                                               | `src/baseline/structural_misalignment/cfg/diff.py`                                                                                                           |
+| `utils/cfg_grounding.py`                                          | `src/baseline/structural_misalignment/cfg/diff.py` + `src/baseline/structural_misalignment/grounding/*`                                                                                |
+| `utils/llm_clients.py` (subtasks/linking prompt/parsing behavior) | `src/baseline/structural_misalignment/grounding/subtasks.py`, `src/baseline/structural_misalignment/grounding/link.py`, `src/baseline/structural_misalignment/grounding/schemas.py`                              |
+| `utils/misalignment_features.py`                                  | `src/baseline/structural_misalignment/features/structural_features.py`                                                                                                     |
+| legacy universal feature extractor module                         | `src/baseline/structural_misalignment/features/universal_features.py`                                                                                                     |
+| `utils/security_filters.py`                                       | `src/baseline/structural_misalignment/security/patterns.py`, `src/baseline/structural_misalignment/security/severity.py`                                                               |
+| `scripts/run_attack_suite.py` model-bundle/eval-only guardrails   | `src/baseline/structural_misalignment/models/load.py`, `src/baseline/structural_misalignment/models/infer.py`, `src/baseline/structural_misalignment/models/train.py`, `src/baseline/structural_misalignment/plugin.py` |
