@@ -238,10 +238,21 @@ Edit resolution:
 - LLM subtask->CFG grounding
 - structural metrics + optional similarity features
 - model inference with explicit `decision_policy`
-- Task8 modes primary, Task7 modes optional
+- canonical modes: `structural_only`, `similarity_only`, `structural_combined`, `full_universal`, `severity_only_universal`, `no_security`
 
 Default severity behavior is universal-only (`severity_mode: universal`).
 Dataset-marker patterns require explicit debug enablement.
+
+Legacy alias support:
+
+| Legacy mode | Canonical mode |
+| --- | --- |
+| `task8_structure_only` | `structural_only` |
+| `task8_similarity_only` | `similarity_only` |
+| `task8_combined` | `structural_combined` |
+| `task7_full_universal` | `full_universal` |
+| `task7_severity_only_universal` | `severity_only_universal` |
+| `task7_no_security` | `no_security` |
 
 Model artifact note:
 
@@ -272,7 +283,7 @@ Structural defense artifacts:
 - `.../grounding.json`
 - `.../features.json`
 - `.../model_output.json`
-- `.../severity.json` (Task7 modes)
+- `.../severity.json` (`full_universal`/`severity_only_universal`/`no_security`)
 
 Progressive save + resume:
 
@@ -303,7 +314,7 @@ This defense port was copied/adapted from the previous repo modules into the new
 | `utils/cfg_diff.py`                                               | `src/common/cfg/diff.py`                                                                                                           |
 | `utils/cfg_grounding.py`                                          | `src/common/cfg/diff.py` + `src/common/grounding/*`                                                                                |
 | `utils/llm_clients.py` (subtasks/linking prompt/parsing behavior) | `src/common/grounding/subtasks.py`, `src/common/grounding/link.py`, `src/common/grounding/schemas.py`                              |
-| `utils/misalignment_features.py`                                  | `src/common/features/task8.py`                                                                                                     |
-| `utils/task7_feature_extractor.py`                                | `src/common/features/task7.py`                                                                                                     |
+| `utils/misalignment_features.py`                                  | `src/common/features/structural_features.py`                                                                                                     |
+| `utils/task7_feature_extractor.py`                                | `src/common/features/universal_features.py`                                                                                                     |
 | `utils/security_filters.py`                                       | `src/common/security/patterns.py`, `src/common/security/severity.py`                                                               |
 | `scripts/run_attack_suite.py` model-bundle/eval-only guardrails   | `src/common/models/load.py`, `src/common/models/infer.py`, `src/common/models/train.py`, `src/baseline/structural_misalignment.py` |

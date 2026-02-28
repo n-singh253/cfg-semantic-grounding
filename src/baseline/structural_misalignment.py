@@ -11,13 +11,24 @@ from src.common.artifacts import write_hashed_json_artifact
 from src.common.artifact_store import atomic_write_json
 from src.common.cfg.diff import compute_cfg_diff_for_patch
 from src.common.cfg.stats import compute_cfg_stats
-from src.common.features.schema import FEATURE_SCHEMA_VERSION, feature_set_name
-from src.common.features.task7 import columns_for_task7_mode, extract_task7_features, select_feature_subset
-from src.common.features.task8 import (
-    TASK8_COMBINED_FEATURES,
-    TASK8_SIMILARITY_ONLY_FEATURES,
-    TASK8_STRUCTURE_ONLY_FEATURES,
-    compute_task8_feature_row,
+from src.common.features.schema import (
+    FEATURE_SCHEMA_VERSION,
+    STRUCTURAL_FAMILY_MODES,
+    UNIVERSAL_FAMILY_MODES,
+    feature_set_name,
+    is_legacy_mode,
+    normalize_structural_mode,
+)
+from src.common.features.structural_features import (
+    SIMILARITY_ONLY_FEATURES,
+    STRUCTURAL_COMBINED_FEATURES,
+    STRUCTURAL_ONLY_FEATURES,
+    compute_structural_feature_row,
+)
+from src.common.features.universal_features import (
+    columns_for_universal_mode,
+    extract_universal_features,
+    select_feature_subset,
 )
 from src.common.grounding.link import link_subtasks_to_nodes
 from src.common.grounding.subtasks import DEFAULT_SYSTEM_PROMPT, generate_subtasks
@@ -25,18 +36,6 @@ from src.common.hashing import sha256_text
 from src.common.models.infer import decide_from_policy, predict_reject_score
 from src.common.models.load import load_model_bundle
 from src.common.security.severity import analyze_cfg_diff_nodes
-
-
-TASK8_MODES = {
-    "task8_structure_only",
-    "task8_similarity_only",
-    "task8_combined",
-}
-TASK7_MODES = {
-    "task7_full_universal",
-    "task7_severity_only_universal",
-    "task7_no_security",
-}
 
 
 class StructuralMisalignmentDefense(BaseDefense):
@@ -50,21 +49,80 @@ class StructuralMisalignmentDefense(BaseDefense):
         repo_code: Dict[str, Any],
     ):
         _ = all_tests
-        mode = str(self.config.get("mode", "task8_combined")).strip()
+        mode_input = str(self.config.get("mode", "structural_combined")).strip()
+        mode_alias_applied = is_legacy_mode(mode_input)
+        try:
+            mode = normalize_structural_mode(mode_input)
+        except Exception as exc:
+            self.last_signals = {
+                "mode": "unknown",
+                "mode_input": mode_input,
+                "mode_alias_applied": mode_alias_applied,
+                "decision_policy": str(self.config.get("decision_policy", "reject_if_score_ge_threshold")).strip(),
+                "threshold": float(self.config.get("threshold", 0.5)),
+                "failure_flags": {
+                    "cfg_fail": False,
+                    "subtasks_fail": False,
+                    "grounding_fail": False,
+                    "features_fail": False,
+                    "model_missing": False,
+                    "inference_fail": False,
+                },
+                "error": f"Invalid mode: {exc}",
+            }
+            return False
+
         decision_policy = str(self.config.get("decision_policy", "reject_if_score_ge_threshold")).strip()
         threshold = float(self.config.get("threshold", 0.5))
+
         model_path = ""
         path_map = self.config.get("model_paths")
-        if isinstance(path_map, dict) and mode in path_map:
-            model_path = str(path_map.get(mode, "")).strip()
+        if isinstance(path_map, dict):
+            if mode in path_map:
+                model_path = str(path_map.get(mode, "")).strip()
+            elif mode_input in path_map:
+                model_path = str(path_map.get(mode_input, "")).strip()
+            else:
+                for key, value in path_map.items():
+                    if not isinstance(key, str):
+                        continue
+                    try:
+                        if normalize_structural_mode(key) == mode:
+                            model_path = str(value).strip()
+                            break
+                    except Exception:
+                        continue
         if not model_path:
             model_path = str(self.config.get("model_path", "")).strip()
+
+        # Keep canonical naming as source-of-truth, but allow legacy model dirs.
+        model_path_fallback_applied = False
+        if model_path:
+            model_path_obj = Path(model_path)
+            if not model_path_obj.is_absolute():
+                model_path_obj = (Path.cwd() / model_path_obj).resolve()
+            if not model_path_obj.exists():
+                fallback_candidates = []
+                path_text = str(model_path_obj)
+                if "/structural_combined" in path_text:
+                    fallback_candidates.append(Path(path_text.replace("/structural_combined", "/task8_combined")))
+                if "/task8_combined" in path_text:
+                    fallback_candidates.append(Path(path_text.replace("/task8_combined", "/structural_combined")))
+                for candidate in fallback_candidates:
+                    if candidate.exists():
+                        model_path = str(candidate)
+                        model_path_fallback_applied = True
+                        break
+
         severity_mode = str(self.config.get("severity_mode", "universal")).strip().lower()
         if not model_path:
             self.last_signals = {
                 "mode": mode,
+                "mode_input": mode_input,
+                "mode_alias_applied": mode_alias_applied,
                 "decision_policy": decision_policy,
                 "threshold": threshold,
+                "model_path_fallback_applied": model_path_fallback_applied,
                 "failure_flags": {
                     "cfg_fail": False,
                     "subtasks_fail": False,
@@ -101,13 +159,15 @@ class StructuralMisalignmentDefense(BaseDefense):
                 {
                     "stage_completed": stage_status,
                     "mode": mode,
+                    "mode_input": mode_input,
+                    "mode_alias_applied": mode_alias_applied,
                     "config_hash": self.baseline_config_hash,
                 },
             )
 
         persist_stage_status()
         try:
-            if mode not in TASK8_MODES and mode not in TASK7_MODES:
+            if mode not in STRUCTURAL_FAMILY_MODES and mode not in UNIVERSAL_FAMILY_MODES:
                 raise ValueError(f"Unsupported structural_misalignment mode: {mode}")
             if severity_mode in {"markers", "dataset_markers", "hybrid"} and not bool(
                 self.config.get("enable_marker_debug_mode", False)
@@ -234,7 +294,7 @@ class StructuralMisalignmentDefense(BaseDefense):
             )
             artifact_paths["grounding"] = str(grounding_path)
 
-            include_similarity = mode in {"task8_similarity_only", "task8_combined"}
+            include_similarity = mode in {"similarity_only", "structural_combined"}
             require_vectorizer = include_similarity
             current_stage = "model_load"
             bundle = load_model_bundle(model_path, require_vectorizer=require_vectorizer)
@@ -248,13 +308,13 @@ class StructuralMisalignmentDefense(BaseDefense):
             persist_stage_status()
 
             current_stage = "features"
-            if mode in TASK8_MODES:
+            if mode in STRUCTURAL_FAMILY_MODES:
                 node_id_to_snippet = {
                     str(node.get("node_id", "")): str(node.get("code_snippet", ""))
                     for node in candidate_nodes
                     if node.get("node_id")
                 }
-                full_row = compute_task8_feature_row(
+                full_row = compute_structural_feature_row(
                     subtasks=subtasks,
                     links=links,
                     node_id_to_snippet=node_id_to_snippet,
@@ -262,12 +322,12 @@ class StructuralMisalignmentDefense(BaseDefense):
                     include_similarity=include_similarity,
                     mask_tokens=bool(self.config.get("mask_tokens", True)),
                 )
-                if mode == "task8_structure_only":
-                    selected_cols = TASK8_STRUCTURE_ONLY_FEATURES
-                elif mode == "task8_similarity_only":
-                    selected_cols = TASK8_SIMILARITY_ONLY_FEATURES
+                if mode == "structural_only":
+                    selected_cols = STRUCTURAL_ONLY_FEATURES
+                elif mode == "similarity_only":
+                    selected_cols = SIMILARITY_ONLY_FEATURES
                 else:
-                    selected_cols = TASK8_COMBINED_FEATURES
+                    selected_cols = STRUCTURAL_COMBINED_FEATURES
                 feature_row = {col: float(full_row.get(col, 0.0)) for col in selected_cols}
             else:
                 analyzed = analyze_cfg_diff_nodes(
@@ -276,7 +336,7 @@ class StructuralMisalignmentDefense(BaseDefense):
                     comment_stripping_mode=str(self.config.get("comment_stripping_mode", "python_tokenize")),
                 )
                 analyzed_nodes = analyzed["nodes"]
-                task7_full = extract_task7_features(
+                universal_full = extract_universal_features(
                     {
                         "nodes": analyzed_nodes,
                         "links": links,
@@ -284,26 +344,33 @@ class StructuralMisalignmentDefense(BaseDefense):
                     },
                     mode="adv_subtask",
                 )
-                selected_cols = columns_for_task7_mode(mode)
-                feature_row, resolved_cols = select_feature_subset(task7_full, selected_cols)
+                selected_cols = columns_for_universal_mode(mode)
+                feature_row, resolved_cols = select_feature_subset(universal_full, selected_cols)
                 selected_cols = resolved_cols
                 severity_payload = {
                     "summary": analyzed.get("summary", {}),
                     "severity_mode": severity_mode,
                     "marker_debug_enabled": bool(self.config.get("enable_marker_debug_mode", False)),
-                    "task7_features_all": task7_full,
+                    "universal_features_all": universal_full,
                 }
+
+            canonical_feature_set = feature_set_name(mode)
+            features_payload = {
+                "mode": mode,
+                "mode_input": mode_input,
+                "mode_alias_applied": mode_alias_applied,
+                "feature_schema_version": FEATURE_SCHEMA_VERSION,
+                "feature_set_name": canonical_feature_set,
+                "selected_columns": selected_cols,
+                "feature_vector": feature_row,
+                "model_feature_list": bundle.feature_list,
+            }
+            if mode_alias_applied:
+                features_payload["legacy_feature_set_name"] = mode_input
 
             features_path = write_hashed_json_artifact(
                 defense_root / "features.json",
-                {
-                    "mode": mode,
-                    "feature_schema_version": FEATURE_SCHEMA_VERSION,
-                    "feature_set_name": feature_set_name(mode),
-                    "selected_columns": selected_cols,
-                    "feature_vector": feature_row,
-                    "model_feature_list": bundle.feature_list,
-                },
+                features_payload,
                 config_hash=self.baseline_config_hash,
                 refs={
                     "cfg_stats": str(cfg_stats_path),
@@ -314,7 +381,7 @@ class StructuralMisalignmentDefense(BaseDefense):
             stage_status["features_ready"] = True
             persist_stage_status()
 
-            if mode in TASK7_MODES:
+            if mode in UNIVERSAL_FAMILY_MODES:
                 severity_path = write_hashed_json_artifact(
                     defense_root / "severity.json",
                     severity_payload,
@@ -355,9 +422,14 @@ class StructuralMisalignmentDefense(BaseDefense):
                     "decision_policy": decision_policy,
                     "accepted": bool(accepted),
                     "mode": mode,
+                    "mode_input": mode_input,
+                    "mode_alias_applied": mode_alias_applied,
+                    "feature_set_name": canonical_feature_set,
+                    "legacy_feature_set_name": mode_input if mode_alias_applied else "",
                     "missing_feature_columns_filled_zero": inference.missing_columns_filled_zero,
                     "model_metadata": bundle.metadata,
                     "model_dir": str(bundle.model_dir),
+                    "model_path_fallback_applied": model_path_fallback_applied,
                 },
                 config_hash=self.baseline_config_hash,
                 refs={
@@ -368,14 +440,19 @@ class StructuralMisalignmentDefense(BaseDefense):
 
             self.last_signals = {
                 "mode": mode,
+                "mode_input": mode_input,
+                "mode_alias_applied": mode_alias_applied,
                 "decision_policy": decision_policy,
                 "model_score": float(inference.score),
                 "threshold": threshold,
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
-                "feature_set_name": feature_set_name(mode),
+                "feature_set_name": canonical_feature_set,
+                "legacy_feature_set_name": mode_input if mode_alias_applied else "",
                 "eval_only_no_refit_guard": True,
                 "missing_feature_columns_filled_zero": inference.missing_columns_filled_zero,
                 "severity_mode": severity_mode,
+                "model_path": str(model_path),
+                "model_path_fallback_applied": model_path_fallback_applied,
                 "provider": provider,
                 "model": model,
                 "subtasks_prompt_hash": subtasks_meta.get("prompt_hash", ""),
@@ -424,15 +501,21 @@ class StructuralMisalignmentDefense(BaseDefense):
             persist_stage_status()
             self.last_signals = {
                 "mode": mode,
+                "mode_input": mode_input,
+                "mode_alias_applied": mode_alias_applied,
                 "decision_policy": decision_policy,
                 "threshold": threshold,
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
-                "feature_set_name": feature_set_name(mode) if mode in TASK8_MODES.union(TASK7_MODES) else "unknown",
+                "feature_set_name": feature_set_name(mode)
+                if mode in STRUCTURAL_FAMILY_MODES.union(UNIVERSAL_FAMILY_MODES)
+                else "unknown",
+                "legacy_feature_set_name": mode_input if mode_alias_applied else "",
                 "error": error_text,
                 "stage_failed": current_stage,
                 "stage_completed": stage_status,
                 "failure_flags": failure_flags,
                 "artifact_paths": artifact_paths,
+                "model_path_fallback_applied": model_path_fallback_applied,
             }
             return False
 

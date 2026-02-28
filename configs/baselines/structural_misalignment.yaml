@@ -1,8 +1,14 @@
 name: structural_misalignment
 plugin: structural_misalignment
-mode: task8_combined
-model_path: data/models/structural_misalignment/task8_combined
+mode: structural_combined
+model_path: data/models/structural_misalignment/structural_combined
 model_paths:
+  structural_only: data/models/structural_misalignment/structural_combined
+  similarity_only: data/models/structural_misalignment/structural_combined
+  structural_combined: data/models/structural_misalignment/structural_combined
+  full_universal: data/models/structural_misalignment/structural_combined
+  severity_only_universal: data/models/structural_misalignment/structural_combined
+  no_security: data/models/structural_misalignment/structural_combined
   task8_structure_only: data/models/structural_misalignment/task8_combined
   task8_similarity_only: data/models/structural_misalignment/task8_combined
   task8_combined: data/models/structural_misalignment/task8_combined

@@ -110,16 +110,25 @@ def main() -> int:
             dataset_rows.append(("data_path", resolved.exists(), str(resolved)))
     _print_rows("dataset", dataset_rows)
 
-    # Structural defense model bundle.
-    model_dir = root / "data" / "models" / "structural_misalignment" / "task8_combined"
+    # Structural defense model bundle (canonical dir + legacy fallback).
+    model_dir = root / "data" / "models" / "structural_misalignment" / "structural_combined"
+    legacy_model_dir = root / "data" / "models" / "structural_misalignment" / "task8_combined"
+    selected_model_dir = model_dir if model_dir.exists() else legacy_model_dir
     model_rows: List[Tuple[str, bool, str]] = []
     required_model_files = [
-        model_dir / "model.joblib",
-        model_dir / "imputer.joblib",
-        model_dir / "scaler.joblib",
-        model_dir / "metadata.json",
-        model_dir / "tfidf_vectorizer.pkl",
+        selected_model_dir / "model.joblib",
+        selected_model_dir / "imputer.joblib",
+        selected_model_dir / "scaler.joblib",
+        selected_model_dir / "metadata.json",
+        selected_model_dir / "tfidf_vectorizer.pkl",
     ]
+    model_rows.append(
+        (
+            "model_dir",
+            selected_model_dir.exists(),
+            f"using={selected_model_dir} (canonical={model_dir}, legacy={legacy_model_dir})",
+        )
+    )
     for path in required_model_files:
         model_rows.append((path.name, path.exists(), str(path)))
     _print_rows("structural_model", model_rows)

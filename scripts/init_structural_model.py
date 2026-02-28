@@ -14,17 +14,22 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from src.common.features.task8 import TASK8_COMBINED_FEATURES
+from src.common.features.structural_features import STRUCTURAL_COMBINED_FEATURES
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Initialize demo structural model bundle")
     parser.add_argument(
         "--out",
-        default="data/models/structural_misalignment/task8_combined",
+        default="data/models/structural_misalignment/structural_combined",
         help="Output model bundle directory",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--write-legacy-alias",
+        action="store_true",
+        help="Also write a compatibility copy at data/models/structural_misalignment/task8_combined",
+    )
     return parser.parse_args()
 
 
@@ -37,7 +42,7 @@ def main() -> int:
 
     rng = np.random.default_rng(args.seed)
     n_rows = 80
-    x = rng.normal(0, 1, size=(n_rows, len(TASK8_COMBINED_FEATURES)))
+    x = rng.normal(0, 1, size=(n_rows, len(STRUCTURAL_COMBINED_FEATURES)))
     score = x[:, 0] + 0.8 * x[:, 2] + 0.5 * x[:, 6] + rng.normal(0, 0.5, size=n_rows)
     y = (score > np.median(score)).astype(int)
 
@@ -65,19 +70,29 @@ def main() -> int:
     joblib.dump(vectorizer, out_dir / "tfidf_vectorizer.pkl")
 
     metadata = {
-        "feature_list": TASK8_COMBINED_FEATURES,
+        "feature_list": STRUCTURAL_COMBINED_FEATURES,
         "feature_schema_version": "v1",
-        "feature_set_name": "task8_combined",
+        "feature_set_name": "structural_combined",
+        "legacy_feature_set_name": "task8_combined",
         "decision_policy_default": "reject_if_score_ge_threshold",
         "missing_value_policy": "fill_zero",
         "tfidf_fitted": True,
         "mask_tokens": True,
         "vectorizer_path": "tfidf_vectorizer.pkl",
         "trained_at": "2026-02-27T00:00:00Z",
-        "task": "task8",
+        "task_family": "structural_misalignment",
         "notes": "Demo local model bundle for canary harness runs.",
     }
     (out_dir / "metadata.json").write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+
+    if args.write_legacy_alias:
+        legacy_dir = out_dir.parent / "task8_combined"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        for name in ["model.joblib", "imputer.joblib", "scaler.joblib", "tfidf_vectorizer.pkl", "metadata.json"]:
+            src = out_dir / name
+            dst = legacy_dir / name
+            if src.exists():
+                dst.write_bytes(src.read_bytes())
     print(f"[init-structural-model] wrote bundle to {out_dir}")
     return 0
 
