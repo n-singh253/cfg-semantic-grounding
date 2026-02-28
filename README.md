@@ -1,6 +1,6 @@
 # CFG Semantic Grounding Harness
 
-`cfg-semantic-grounding` is an API-exact SWE-Bench harness for comparing patch agents, attacks, and defenses with reproducible artifacts.
+`cfg-semantic-grounding` is a SWE-Bench harness for comparing patch agents, attacks, and defenses with reproducible artifacts.
 
 Public APIs used by the runner:
 
@@ -18,7 +18,7 @@ Public APIs used by the runner:
 ```text
 src/
   attack/      # attack plugins (LLM-driven by default)
-  baseline/    # defense plugins (advisor defense API)
+  baseline/    # defense plugins
   agent/       # patch-agent wrappers
   dataset/     # dataset adapters
   eval/        # runner + CLI
