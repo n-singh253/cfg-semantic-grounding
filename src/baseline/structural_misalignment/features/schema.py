@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-FEATURE_SCHEMA_VERSION = "v1"
+# Feature schema version
+# v1: Original 29 features
+# v2: Extended 47 features
+FEATURE_SCHEMA_VERSION = "v2"
 
 CANONICAL_MODE_NAMES: Dict[str, str] = {
     "structural_only": "structural_only",

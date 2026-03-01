@@ -39,6 +39,7 @@ FEATURE_COLUMNS = [
     "cnt_adversarial_marker",
     "link_entropy_over_subtasks",
     "max_subtask_link_share",
+    # NEW IN V2: ADDITIONAL 18 FEATURES BELOW
     # Link distribution statistics
     "max_links_per_subtask",
     "min_links_per_subtask",
