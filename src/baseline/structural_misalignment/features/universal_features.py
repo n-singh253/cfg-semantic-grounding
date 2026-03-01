@@ -39,6 +39,31 @@ FEATURE_COLUMNS = [
     "cnt_adversarial_marker",
     "link_entropy_over_subtasks",
     "max_subtask_link_share",
+    # NEW IN V2: ADDITIONAL 18 FEATURES BELOW
+    # Link distribution statistics
+    "max_links_per_subtask",
+    "min_links_per_subtask",
+    "std_links_per_subtask",
+    "max_links_per_node",
+    "min_links_per_node",
+    "std_links_per_node",
+    # Density and coverage
+    "link_density",
+    # Pattern features
+    "diagonal_links",
+    "diagonal_ratio",
+    "one_to_one_subtasks",
+    "one_to_many_subtasks",
+    "one_to_one_nodes",
+    "many_to_one_nodes",
+    # Ratios
+    "subtask_node_ratio",
+    # Distribution inequality
+    "gini_subtasks",
+    "gini_nodes",
+    # Connectivity features
+    "is_connected",
+    "all_min_2_connections",
 ]
 
 SECURITY_FEATURE_PREFIXES = ["suspicious_", "cnt_"]
@@ -75,6 +100,64 @@ def compute_link_entropy(links_per_subtask: List[int]) -> float:
         prob = count / total
         entropy -= prob * math.log2(prob)
     return entropy
+
+
+def compute_gini_coefficient(values: List[int]) -> float:
+    """Calculate Gini coefficient for link distribution."""
+    if not values or sum(values) == 0:
+        return 0.0
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    cumsum = 0.0
+    for i, val in enumerate(sorted_values):
+        cumsum += (2 * (i + 1) - n - 1) * val
+    return cumsum / (n * sum(sorted_values))
+
+
+def compute_std(values: List[int]) -> float:
+    """Calculate standard deviation."""
+    if not values or len(values) <= 1:
+        return 0.0
+    mean = sum(values) / len(values)
+    variance = sum((x - mean) ** 2 for x in values) / len(values)
+    return math.sqrt(variance)
+
+
+def check_connectivity(links: List[Dict[str, Any]], num_subtasks: int, num_nodes: int) -> bool:
+    """Check if the bipartite graph is connected using BFS."""
+    if num_subtasks == 0 or num_nodes == 0:
+        return False
+    
+    # Build adjacency list
+    graph: Dict[str, List[str]] = {}
+    for idx, link in enumerate(links):
+        subtask_key = f"s_{idx}"
+        if subtask_key not in graph:
+            graph[subtask_key] = []
+        for node_id in link.get("node_ids", []):
+            node_key = f"n_{node_id}"
+            if node_key not in graph:
+                graph[node_key] = []
+            graph[subtask_key].append(node_key)
+            graph[node_key].append(subtask_key)
+    
+    if not graph:
+        return False
+    
+    # BFS from first node
+    visited = set()
+    queue = [next(iter(graph.keys()))]
+    visited.add(queue[0])
+    
+    while queue:
+        current = queue.pop(0)
+        for neighbor in graph.get(current, []):
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(neighbor)
+    
+    # Check if all nodes with links are visited
+    return len(visited) == len(graph)
 
 
 def compute_suspicious_misassignment(
@@ -223,6 +306,82 @@ def extract_universal_features(record: Dict[str, Any], mode: str) -> Dict[str, f
     features["max_subtask_link_share"] = (
         max(links_per_subtask) / max(1, num_links_total) if links_per_subtask else 0.0
     )
+
+    # === New Features: Link Distribution Statistics ===
+    # Per subtask statistics
+    if links_per_subtask:
+        features["max_links_per_subtask"] = float(max(links_per_subtask))
+        features["min_links_per_subtask"] = float(min(links_per_subtask))
+        features["std_links_per_subtask"] = compute_std(links_per_subtask)
+    else:
+        features["max_links_per_subtask"] = 0.0
+        features["min_links_per_subtask"] = 0.0
+        features["std_links_per_subtask"] = 0.0
+    
+    # Per node statistics
+    links_per_node = list(node_to_subtask.values()) if node_to_subtask else []
+    if links_per_node:
+        features["max_links_per_node"] = float(max(links_per_node))
+        features["min_links_per_node"] = float(min(links_per_node))
+        features["std_links_per_node"] = compute_std(links_per_node)
+    else:
+        features["max_links_per_node"] = 0.0
+        features["min_links_per_node"] = 0.0
+        features["std_links_per_node"] = 0.0
+    
+    # === New Features: Density and Coverage ===
+    features["link_density"] = (
+        num_links_total / max(1, linked_subtasks * linked_nodes) if linked_subtasks and linked_nodes else 0.0
+    )
+    
+    # === New Features: Pattern Features ===
+    # Diagonal links (where subtask index equals node index, if applicable)
+    diagonal_count = 0
+    for idx, link in enumerate(links):
+        node_ids = link.get("node_ids", [])
+        # Check if any node_id contains the subtask index pattern
+        for node_id in node_ids:
+            node_str = str(node_id)
+            # Try to extract numeric suffix from node_id
+            if f"::n{idx}" in node_str or node_str.endswith(f"_{idx}"):
+                diagonal_count += 1
+                break
+    
+    features["diagonal_links"] = float(diagonal_count)
+    features["diagonal_ratio"] = diagonal_count / max(1, len(links)) if links else 0.0
+    
+    # One-to-one and one-to-many patterns
+    subtask_link_counts = [len(link.get("node_ids", [])) for link in links]
+    features["one_to_one_subtasks"] = float(sum(1 for count in subtask_link_counts if count == 1))
+    features["one_to_many_subtasks"] = float(sum(1 for count in subtask_link_counts if count > 1))
+    
+    node_link_counts = list(node_to_subtask.values())
+    features["one_to_one_nodes"] = float(sum(1 for count in node_link_counts if count == 1))
+    features["many_to_one_nodes"] = float(sum(1 for count in node_link_counts if count > 1))
+    
+    # === New Features: Ratios ===
+    features["subtask_node_ratio"] = linked_subtasks / max(1, linked_nodes) if linked_nodes else 0.0
+    
+    # === New Features: Distribution Inequality (Gini Coefficients) ===
+    features["gini_subtasks"] = compute_gini_coefficient(links_per_subtask)
+    features["gini_nodes"] = compute_gini_coefficient(links_per_node)
+    
+    # === New Features: Connectivity ===
+    features["is_connected"] = float(check_connectivity(links, num_subtasks, num_nodes))
+    
+    # Check if all nodes have at least 2 connections
+    min_connections = 2
+    all_have_min = True
+    if linked_subtasks < num_subtasks or linked_nodes < num_nodes:
+        all_have_min = False  # Some nodes have 0 connections
+    elif subtask_link_counts:
+        if any(count < min_connections for count in subtask_link_counts if count > 0):
+            all_have_min = False
+    if node_link_counts and all_have_min:
+        if any(count < min_connections for count in node_link_counts):
+            all_have_min = False
+    
+    features["all_min_2_connections"] = float(all_have_min)
 
     # Fill any missing expected columns with 0.0 for stable schema.
     for col in FEATURE_COLUMNS:
