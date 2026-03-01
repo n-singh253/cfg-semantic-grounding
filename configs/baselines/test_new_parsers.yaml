@@ -1,0 +1,24 @@
+name: test_new_parsers
+plugin: structural_misalignment
+mode: full_universal
+
+# Use NEW parsers: LLM chunks + embedding similarity
+parsers:
+  prompt: llm_subtasks
+  patch: llm_chunks
+  linking: embedding_similarity
+
+model_path: data/models/structural_misalignment/structural_combined
+threshold: 0.5
+decision_policy: reject_if_score_ge_threshold
+severity_mode: universal
+enable_marker_debug_mode: false
+allow_hunk_fallback: true
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  temperature: 0.2
+  max_retries: 2
+  backoff_sec: 1.0
+  allow_provider_fallback: false
