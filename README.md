@@ -87,6 +87,7 @@ python scripts/init_dataset.py \
 Agent command wrappers are configured in `configs/agents/*.yaml`.
 If the CLI binary is on your `PATH`, the wrapper can call it.
 For real SWE-Bench runs, each agent config uses `--prompt {agent_prompt}` so the runner passes:
+
 - issue text
 - instance/repo/base_commit context
 - explicit test commands (`all_tests`)
@@ -250,6 +251,20 @@ Model artifact note:
 - Missing/incompatible model artifacts fail clearly and are recorded in `results.jsonl -> defense_signals.error` and `failure_flags.model_missing`.
 - No silent heuristic fallback is used on the primary path.
 
+Additional defense config options:
+
+- `parsers.prompt`, `parsers.patch`, `parsers.linking`:
+choose parser implementations for subtask extraction, patch parsing, and grounding.
+Example parser-enabled config: `configs/baselines/structural_misalignment_test.yaml`.
+- `requires_gpu`:
+explicit gate for GPU-dependent parser combinations (for example `embedding_similarity`).
+When enabled, the defense validates CUDA + parser deps before running.
+Example GPU config: `configs/baselines/test_new_parsers.yaml`.
+- `max_feature_mismatch_ratio`:
+fail-fast guard for model/feature mismatch during inference.
+If too many model-expected columns are missing from extracted features, inference fails with a clear error.
+Typical value: `0.05` (5%).
+
 ## Output Artifacts
 
 Per run:
@@ -298,13 +313,15 @@ Progressive save + resume:
 This defense port was copied/adapted from the previous repo modules into the new harness layout:
 
 
-| Old repo source                                                   | New repo destination                                                                                                               |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `utils/cfg_extractor.py`                                          | `src/baseline/structural_misalignment/cfg/build.py`                                                                                                          |
-| `utils/cfg_diff.py`                                               | `src/baseline/structural_misalignment/cfg/diff.py`                                                                                                           |
-| `utils/cfg_grounding.py`                                          | `src/baseline/structural_misalignment/cfg/diff.py` + `src/baseline/structural_misalignment/grounding/*`                                                                                |
-| `utils/llm_clients.py` (subtasks/linking prompt/parsing behavior) | `src/baseline/structural_misalignment/grounding/subtasks.py`, `src/baseline/structural_misalignment/grounding/link.py`, `src/baseline/structural_misalignment/grounding/schemas.py`                              |
-| `utils/misalignment_features.py`                                  | `src/baseline/structural_misalignment/features/structural_features.py`                                                                                                     |
-| legacy universal feature extractor module                         | `src/baseline/structural_misalignment/features/universal_features.py`                                                                                                     |
-| `utils/security_filters.py`                                       | `src/baseline/structural_misalignment/security/patterns.py`, `src/baseline/structural_misalignment/security/severity.py`                                                               |
+| Old repo source                                                   | New repo destination                                                                                                                                                                                                    |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `utils/cfg_extractor.py`                                          | `src/baseline/structural_misalignment/cfg/build.py`                                                                                                                                                                     |
+| `utils/cfg_diff.py`                                               | `src/baseline/structural_misalignment/cfg/diff.py`                                                                                                                                                                      |
+| `utils/cfg_grounding.py`                                          | `src/baseline/structural_misalignment/cfg/diff.py` + `src/baseline/structural_misalignment/grounding/*`                                                                                                                 |
+| `utils/llm_clients.py` (subtasks/linking prompt/parsing behavior) | `src/baseline/structural_misalignment/grounding/subtasks.py`, `src/baseline/structural_misalignment/grounding/link.py`, `src/baseline/structural_misalignment/grounding/schemas.py`                                     |
+| `utils/misalignment_features.py`                                  | `src/baseline/structural_misalignment/features/structural_features.py`                                                                                                                                                  |
+| legacy universal feature extractor module                         | `src/baseline/structural_misalignment/features/universal_features.py`                                                                                                                                                   |
+| `utils/security_filters.py`                                       | `src/baseline/structural_misalignment/security/patterns.py`, `src/baseline/structural_misalignment/security/severity.py`                                                                                                |
 | `scripts/run_attack_suite.py` model-bundle/eval-only guardrails   | `src/baseline/structural_misalignment/models/load.py`, `src/baseline/structural_misalignment/models/infer.py`, `src/baseline/structural_misalignment/models/train.py`, `src/baseline/structural_misalignment/plugin.py` |
+
+
