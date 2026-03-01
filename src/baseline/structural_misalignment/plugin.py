@@ -473,6 +473,11 @@ class StructuralMisalignmentDefense(BaseDefense):
                     "missing_feature_columns_filled_zero": inference.missing_columns_filled_zero,
                     "model_metadata": bundle.metadata,
                     "model_dir": str(bundle.model_dir),
+                    "parsers": {
+                        "prompt_parser": prompt_parser_name,
+                        "patch_parser": patch_parser_name,
+                        "linker": linker_name,
+                    },
                 },
                 config_hash=self.baseline_config_hash,
                 refs={
@@ -492,6 +497,11 @@ class StructuralMisalignmentDefense(BaseDefense):
                 "missing_feature_columns_filled_zero": inference.missing_columns_filled_zero,
                 "severity_mode": severity_mode,
                 "model_path": str(model_path),
+                "parsers": {
+                    "prompt_parser": prompt_parser_name,
+                    "patch_parser": patch_parser_name,
+                    "linker": linker_name,
+                },
                 "provider": provider,
                 "model": model,
                 "subtasks_prompt_hash": subtasks_meta.get("prompt_hash", ""),
@@ -546,6 +556,11 @@ class StructuralMisalignmentDefense(BaseDefense):
                 "feature_set_name": feature_set_name(mode)
                 if mode in STRUCTURAL_FAMILY_MODES.union(UNIVERSAL_FAMILY_MODES)
                 else "unknown",
+                "parsers": {
+                    "prompt_parser": prompt_parser_name,
+                    "patch_parser": patch_parser_name,
+                    "linker": linker_name,
+                },
                 "error": error_text,
                 "stage_failed": current_stage,
                 "stage_completed": stage_status,
