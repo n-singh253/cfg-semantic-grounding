@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,7 +44,6 @@ def _build_patch_parsing_prompt(patch_text: str) -> str:
 
 def _parse_chunks_response(text: str) -> List[Dict[str, Any]]:
     """Parse LLM response to extract chunks."""
-    import json
     
     raw = (text or "").strip()
     if not raw:
@@ -206,7 +206,7 @@ def llm_chunks_parser(
     instance_id = str(kwargs.get("instance_id", config.get("instance_id", "unknown")))
     module_name = str(kwargs.get("module_name", config.get("plugin", "structural_misalignment")))
     module_config_hash = str(kwargs.get("module_config_hash", ""))
-    fidelity_mode = str(kwargs.get("fidelity_mode", config.get("fidelity_mode", "full")))
+    fidelity_mode = str(kwargs.get("fidelity_mode", config.get("fidelity_mode", "llm")))
     
     prompt = _build_patch_parsing_prompt(patch_text)
     
