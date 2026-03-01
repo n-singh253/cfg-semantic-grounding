@@ -9,7 +9,6 @@ from src.baseline.base import BaseDefense
 from src.baseline.registry import register_baseline
 from src.common.artifacts import write_hashed_json_artifact
 from src.common.artifact_store import atomic_write_json
-from src.baseline.structural_misalignment.cfg.diff import compute_cfg_diff_for_patch
 from src.baseline.structural_misalignment.cfg.stats import compute_cfg_stats
 from src.baseline.structural_misalignment.features.schema import (
     FEATURE_SCHEMA_VERSION,
@@ -29,11 +28,7 @@ from src.baseline.structural_misalignment.features.universal_features import (
     extract_universal_features,
     select_feature_subset,
 )
-from src.baseline.structural_misalignment.grounding.link import link_subtasks_to_nodes
-from src.baseline.structural_misalignment.grounding.subtasks import (
-    DEFAULT_SYSTEM_PROMPT,
-    generate_subtasks,
-)
+from src.baseline.structural_misalignment.grounding.subtasks import DEFAULT_SYSTEM_PROMPT
 from src.common.hashing import sha256_text
 from src.baseline.structural_misalignment.models.infer import (
     decide_from_policy,
@@ -41,6 +36,18 @@ from src.baseline.structural_misalignment.models.infer import (
 )
 from src.baseline.structural_misalignment.models.load import load_model_bundle
 from src.baseline.structural_misalignment.security.severity import analyze_cfg_diff_nodes
+
+# Import parser registries and default implementations (triggers registration)
+from src.baseline.structural_misalignment.parsers.registry import (
+    get_linker,
+    get_patch_parser,
+    get_prompt_parser,
+)
+
+# Import default parsers to register them
+import src.baseline.structural_misalignment.parsers.prompt.llm_subtasks  # noqa: F401
+import src.baseline.structural_misalignment.parsers.patch.cfg_ast  # noqa: F401
+import src.baseline.structural_misalignment.parsers.linking.llm_grounding  # noqa: F401
 
 
 class StructuralMisalignmentDefense(BaseDefense):
@@ -76,6 +83,72 @@ class StructuralMisalignmentDefense(BaseDefense):
 
         decision_policy = str(self.config.get("decision_policy", "reject_if_score_ge_threshold")).strip()
         threshold = float(self.config.get("threshold", 0.5))
+
+        # Load parser configurations (with defaults)
+        parser_config = self.config.get("parsers", {})
+        if not isinstance(parser_config, dict):
+            parser_config = {}
+        prompt_parser_name = str(parser_config.get("prompt", "llm_subtasks")).strip()
+        patch_parser_name = str(parser_config.get("patch", "cfg_ast")).strip()
+        linker_name = str(parser_config.get("linking", "llm_grounding")).strip()
+
+        # Get parser implementations from registries
+        try:
+            prompt_parser = get_prompt_parser(prompt_parser_name)
+        except KeyError as exc:
+            self.last_signals = {
+                "mode": mode,
+                "decision_policy": decision_policy,
+                "threshold": threshold,
+                "failure_flags": {
+                    "cfg_fail": False,
+                    "subtasks_fail": True,
+                    "grounding_fail": False,
+                    "features_fail": False,
+                    "model_missing": False,
+                    "inference_fail": False,
+                },
+                "error": f"Unknown prompt parser: {exc}",
+            }
+            return False
+
+        try:
+            patch_parser = get_patch_parser(patch_parser_name)
+        except KeyError as exc:
+            self.last_signals = {
+                "mode": mode,
+                "decision_policy": decision_policy,
+                "threshold": threshold,
+                "failure_flags": {
+                    "cfg_fail": True,
+                    "subtasks_fail": False,
+                    "grounding_fail": False,
+                    "features_fail": False,
+                    "model_missing": False,
+                    "inference_fail": False,
+                },
+                "error": f"Unknown patch parser: {exc}",
+            }
+            return False
+
+        try:
+            linker = get_linker(linker_name)
+        except KeyError as exc:
+            self.last_signals = {
+                "mode": mode,
+                "decision_policy": decision_policy,
+                "threshold": threshold,
+                "failure_flags": {
+                    "cfg_fail": False,
+                    "subtasks_fail": False,
+                    "grounding_fail": True,
+                    "features_fail": False,
+                    "model_missing": False,
+                    "inference_fail": False,
+                },
+                "error": f"Unknown linker: {exc}",
+            }
+            return False
 
         model_path = ""
         path_map = self.config.get("model_paths")
@@ -154,10 +227,12 @@ class StructuralMisalignmentDefense(BaseDefense):
 
             current_stage = "cfg"
             base_repo = Path(str(repo_code.get("path", ""))).resolve()
-            cfg_diff, candidate_nodes, cfg_diagnostics = compute_cfg_diff_for_patch(
+            cfg_diff, candidate_nodes, cfg_diagnostics = patch_parser(
                 patch_text,
                 base_repo=base_repo if base_repo.exists() else None,
                 allow_hunk_fallback=allow_hunk_fallback,
+                config=self.config,
+                artifact_dir=defense_root,
             )
             if cfg_diagnostics.get("fallback_used") and not allow_hunk_fallback:
                 raise RuntimeError(
@@ -196,7 +271,7 @@ class StructuralMisalignmentDefense(BaseDefense):
                 allow_provider_fallback = True
 
             current_stage = "subtasks"
-            subtasks, subtasks_meta = generate_subtasks(
+            subtasks, subtasks_meta = prompt_parser(
                 llm_client=self.llm_client,
                 instance_id=instance_id,
                 module_name=self.name,
@@ -212,6 +287,7 @@ class StructuralMisalignmentDefense(BaseDefense):
                 backoff_sec=backoff_sec,
                 allow_provider_fallback=allow_provider_fallback,
                 system_prompt=str(llm_cfg.get("subtasks_system_prompt", DEFAULT_SYSTEM_PROMPT)),
+                config=self.config,
             )
             subtasks_path = write_hashed_json_artifact(
                 defense_root / "subtasks.json",
@@ -227,7 +303,7 @@ class StructuralMisalignmentDefense(BaseDefense):
             persist_stage_status()
 
             current_stage = "grounding"
-            links, links_meta = link_subtasks_to_nodes(
+            links, links_meta = linker(
                 llm_client=self.llm_client,
                 instance_id=instance_id,
                 module_name=self.name,
@@ -244,6 +320,7 @@ class StructuralMisalignmentDefense(BaseDefense):
                 max_retries=max_retries,
                 backoff_sec=backoff_sec,
                 allow_provider_fallback=allow_provider_fallback,
+                config=self.config,
             )
             grounding_path = write_hashed_json_artifact(
                 defense_root / "grounding.json",
