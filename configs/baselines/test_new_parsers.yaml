@@ -1,3 +1,8 @@
+# GPU/LLM-DEPENDENT CONFIG - NOT FOR DEFAULT SMOKE TESTS
+# Requirements:
+#   - GPU with CUDA (for embedding_similarity parser with BERT embeddings)
+#   - OpenAI API access (for llm_chunks patch parser and llm_subtasks prompt parser)
+
 name: test_new_parsers
 plugin: structural_misalignment
 mode: full_universal
@@ -8,7 +13,7 @@ parsers:
   patch: llm_chunks
   linking: embedding_similarity
 
-model_path: data/models/structural_misalignment/structural_combined
+model_path: data/models/structural_misalignment/full_universal
 threshold: 0.5
 decision_policy: reject_if_score_ge_threshold
 severity_mode: universal

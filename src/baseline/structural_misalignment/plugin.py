@@ -440,7 +440,8 @@ class StructuralMisalignmentDefense(BaseDefense):
                 artifact_paths["severity"] = str(severity_path)
 
             current_stage = "inference"
-            inference = predict_reject_score(bundle, feature_row)
+            max_mismatch_ratio = float(self.config.get("max_feature_mismatch_ratio", 0.05))
+            inference = predict_reject_score(bundle, feature_row, max_mismatch_ratio=max_mismatch_ratio)
             accepted = decide_from_policy(inference.score, threshold, decision_policy)
             stage_status["inference_done"] = True
             persist_stage_status()

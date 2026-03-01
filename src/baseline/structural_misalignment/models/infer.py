@@ -34,7 +34,12 @@ def _score_with_model(model, x_scaled: np.ndarray) -> float:
     return min(1.0, max(0.0, pred))
 
 
-def predict_reject_score(bundle: ModelBundle, feature_row: Dict[str, float]) -> InferenceResult:
+def predict_reject_score(
+    bundle: ModelBundle,
+    feature_row: Dict[str, float],
+    max_mismatch_ratio: float = 0.05,
+) -> InferenceResult:
+
     # Eval-only guard: inference path must never call fit().
     if not hasattr(bundle.model, "predict"):
         raise ValueError("Loaded model object does not support predict()")
@@ -51,6 +56,22 @@ def predict_reject_score(bundle: ModelBundle, feature_row: Dict[str, float]) -> 
         except (TypeError, ValueError):
             ordered.append(0.0)
             missing.append(col)
+
+    # Fail-Fast Guard: Check if mismatch ratio exceeds threshold
+    if missing and bundle.feature_list:
+        mismatch_ratio = len(missing) / len(bundle.feature_list)
+        if mismatch_ratio > max_mismatch_ratio:
+            raise ValueError(
+                "Feature mismatch warning.\n"
+                f"- Missing expected features: {len(missing)}/{len(bundle.feature_list)} "
+                f"({mismatch_ratio:.1%}) > allowed {max_mismatch_ratio:.1%}\n"
+                f"- Model mode: {bundle.metadata.get('mode', 'unknown')}\n"
+                f"- Expected feature count: {len(bundle.feature_list)}\n"
+                f"- Provided feature count: {len(feature_row)}\n"
+                "Likely cause: serving 'mode' config doesn't match the model's training feature set.\n"
+                "Fix: train a model for the current mode, or change mode to match the model.\n"
+                "Override: increase config 'max_feature_mismatch_ratio'."
+            )           
 
     x = _as_2d_array(ordered)
     x_imp = bundle.imputer.transform(x)
