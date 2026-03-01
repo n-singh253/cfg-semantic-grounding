@@ -47,7 +47,9 @@ from src.baseline.structural_misalignment.parsers.registry import (
 # Import default parsers to register them
 import src.baseline.structural_misalignment.parsers.prompt.llm_subtasks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.cfg_ast  # noqa: F401
+import src.baseline.structural_misalignment.parsers.patch.llm_chunks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.llm_grounding  # noqa: F401
+import src.baseline.structural_misalignment.parsers.linking.embedding_similarity  # noqa: F401
 
 
 class StructuralMisalignmentDefense(BaseDefense):
@@ -233,6 +235,11 @@ class StructuralMisalignmentDefense(BaseDefense):
                 allow_hunk_fallback=allow_hunk_fallback,
                 config=self.config,
                 artifact_dir=defense_root,
+                llm_client=self.llm_client,
+                instance_id=instance_id,
+                module_name=self.name,
+                module_config_hash=self.baseline_config_hash,
+                fidelity_mode=self.fidelity_mode,
             )
             if cfg_diagnostics.get("fallback_used") and not allow_hunk_fallback:
                 raise RuntimeError(
