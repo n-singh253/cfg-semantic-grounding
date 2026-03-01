@@ -119,7 +119,8 @@ def embedding_similarity_linker(
     if not cuda_available:
         raise RuntimeError(
             "embedding_similarity_linker requires CUDA to be available. "
-            "CUDA not detected. Please ensure you have a GPU and PyTorch with CUDA support installed."
+            "CUDA not detected. Please ensure you have a GPU and PyTorch with CUDA support installed. "
+            "To catch this error early, set 'requires_gpu: true' in your config."
         )
     
     device = "cuda"

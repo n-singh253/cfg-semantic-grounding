@@ -94,6 +94,97 @@ class StructuralMisalignmentDefense(BaseDefense):
         patch_parser_name = str(parser_config.get("patch", "cfg_ast")).strip()
         linker_name = str(parser_config.get("linking", "llm_grounding")).strip()
 
+        # Define GPU-dependent parsers
+        GPU_DEPENDENT_PARSERS = {"embedding_similarity"}
+        selected_parsers = {prompt_parser_name, patch_parser_name, linker_name}
+        needs_gpu = bool(selected_parsers & GPU_DEPENDENT_PARSERS)
+
+        # GPU requirement config
+        requires_gpu_config = self.config.get("requires_gpu")
+        
+        if needs_gpu:
+            # GPU-dependent parser selected
+            if requires_gpu_config is False:
+                # User explicitly said no GPU but selected GPU parser
+                self.last_signals = {
+                    "mode": mode,
+                    "decision_policy": decision_policy,
+                    "threshold": threshold,
+                    "failure_flags": {
+                        "cfg_fail": False,
+                        "subtasks_fail": False,
+                        "grounding_fail": False,
+                        "features_fail": False,
+                        "model_missing": False,
+                        "inference_fail": False,
+                    },
+                    "error": (
+                        f"Configuration mismatch: requires_gpu is explicitly false, but GPU-dependent "
+                        f"parsers are selected (prompt={prompt_parser_name}, patch={patch_parser_name}, "
+                        f"linking={linker_name}). GPU-dependent parsers: {', '.join(sorted(GPU_DEPENDENT_PARSERS))}. "
+                        f"Either set 'requires_gpu: true' or use CPU-compatible parsers."
+                    ),
+                }
+                return False
+            
+            # Check for required dependencies
+            missing_deps = []
+            try:
+                import torch
+            except ImportError:
+                missing_deps.append("torch")
+            try:
+                import transformers
+            except ImportError:
+                missing_deps.append("transformers")
+            
+            if missing_deps:
+                self.last_signals = {
+                    "mode": mode,
+                    "decision_policy": decision_policy,
+                    "threshold": threshold,
+                    "failure_flags": {
+                        "cfg_fail": False,
+                        "subtasks_fail": False,
+                        "grounding_fail": False,
+                        "features_fail": False,
+                        "model_missing": False,
+                        "inference_fail": False,
+                    },
+                    "error": (
+                        f"GPU-dependent parsers selected but required packages missing: {', '.join(missing_deps)}. "
+                        f"Parsers: prompt={prompt_parser_name}, patch={patch_parser_name}, linking={linker_name}. "
+                        f"Install with: pip install {' '.join(missing_deps)}"
+                    ),
+                }
+                return False
+            
+            # Check CUDA availability
+            import torch
+            if not torch.cuda.is_available():
+                self.last_signals = {
+                    "mode": mode,
+                    "decision_policy": decision_policy,
+                    "threshold": threshold,
+                    "failure_flags": {
+                        "cfg_fail": False,
+                        "subtasks_fail": False,
+                        "grounding_fail": False,
+                        "features_fail": False,
+                        "model_missing": False,
+                        "inference_fail": False,
+                    },
+                    "error": (
+                        f"GPU-dependent parsers selected but CUDA is not available. "
+                        f"Parsers: prompt={prompt_parser_name}, patch={patch_parser_name}, linking={linker_name}. "
+                        f"Please ensure PyTorch with CUDA support is installed and a GPU is available, "
+                        f"or use CPU-compatible parsers."
+                    ),
+                }
+                return False
+
+        # Here accepts requires_gpu: true even when using CPU-compatible parsers
+
         # Get parser implementations from registries
         try:
             prompt_parser = get_prompt_parser(prompt_parser_name)

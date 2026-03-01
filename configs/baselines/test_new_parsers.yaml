@@ -1,11 +1,16 @@
 # GPU/LLM-DEPENDENT CONFIG - NOT FOR DEFAULT SMOKE TESTS
 # Requirements:
 #   - GPU with CUDA (for embedding_similarity parser with BERT embeddings)
+#   - PyTorch with CUDA support (torch)
+#   - Transformers library (transformers)
 #   - OpenAI API access (for llm_chunks patch parser and llm_subtasks prompt parser)
 
 name: test_new_parsers
 plugin: structural_misalignment
 mode: full_universal
+
+# GPU requirement gate - validates CUDA, torch, and transformers availability
+requires_gpu: true
 
 # Use NEW parsers: LLM chunks + embedding similarity
 parsers:
