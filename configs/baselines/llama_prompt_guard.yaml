@@ -1,0 +1,12 @@
+name: llama_prompt_guard
+plugin: llama_prompt_guard
+
+# Model selection (Llama Prompt Guard 1 & 2 for prompt injection/jailbreak detection)
+# Examples:
+#   - meta-llama/Llama-Prompt-Guard-2-86M (default, best performance)
+#   - meta-llama/Llama-Prompt-Guard-2-22M (smaller, 75% faster, minimal performance trade-off)
+#   - meta-llama/Prompt-Guard-86M (Llama Prompt Guard 1, original version)
+model: meta-llama/Llama-Prompt-Guard-2-86M
+
+# Maximum input length for tokenization (512 tokens per model spec)
+max_length: 512

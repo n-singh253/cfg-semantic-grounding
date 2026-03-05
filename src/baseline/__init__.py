@@ -3,6 +3,7 @@
 from src.baseline import (  # noqa: F401
     agentic_guard,
     llama_guard,
+    llama_prompt_guard,
     llm_judge,
     prompt_filter,
     prompt_rewrite,

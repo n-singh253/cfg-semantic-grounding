@@ -9,5 +9,4 @@ plugin: llama_guard
 #   - meta-llama/LlamaGuard-7b (Llama Guard 1)
 model: meta-llama/Llama-Guard-3-8B
 
-# Maximum input length for tokenization
 max_length: 4096
