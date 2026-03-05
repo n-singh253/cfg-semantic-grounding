@@ -2,6 +2,7 @@
 
 from src.baseline import (  # noqa: F401
     agentic_guard,
+    llama_guard,
     llm_judge,
     prompt_filter,
     prompt_rewrite,
