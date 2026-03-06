@@ -10,4 +10,5 @@ from src.baseline import (  # noqa: F401
     static_bandit,
     static_semgrep,
 )
+from src.baseline import sequence_classifiers  # noqa: F401
 from src.baseline.structural_misalignment import plugin as structural_misalignment  # noqa: F401

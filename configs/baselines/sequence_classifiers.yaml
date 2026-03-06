@@ -1,0 +1,56 @@
+# Sequence Classifier Baseline Configuration
+#
+# This unified configuration handles all phases:
+#   1. Data Preparation - Extract and split training data from evaluation results
+#   2. Training - Fine-tune transformer model (BERT, RoBERTa, etc.)
+#   3. Evaluation - Use trained model as defense plugin
+#
+# Usage:
+#   python -m src.baseline.sequence_classifiers.sequence_classifiers --config configs/baselines/sequence_classifiers.yaml
+
+plugin: sequence_classifiers
+
+###### DATA PREPARATION ######
+data_preparation:
+  benign_results_path: out/{benign_run_name}/results.jsonl
+  malicious_results_path: out/{malicious_run_name}/results.jsonl
+  
+  output_dir: data/prepared/swexploit_vs_none
+  
+  # Options: "stratified_instance", "instance_level", "random"
+  split_strategy: stratified_instance
+  
+  train_ratio: 0.8
+  random_seed: 42
+  
+  # Optional: Limit instances per class (null = no limit)
+  limit_per_class: null
+
+###### TRAINING ######
+training:
+  # HuggingFace model to fine-tune
+  model_name: google-bert/bert-base-uncased
+  
+  # Output directory for trained model
+  output_dir: data/models/sequence_classifiers/bert_swexploit
+  
+  epochs: 3
+  batch_size: 16
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.1
+  
+  max_length: 512
+  
+  random_seed: 42
+
+###### EVALUATION / DEFENSE ######
+# Path to trained model directory (set by training phase)
+model_path: data/models/sequence_classifiers/bert_swexploit
+
+max_length: 512
+
+threshold: 0.5
+
+device: auto
+
+surrogate_mode: false
