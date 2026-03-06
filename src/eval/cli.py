@@ -9,7 +9,7 @@ from typing import List, Optional
 
 from src.common.config import load_yaml
 from src.baseline.registry import list_baselines
-from src.eval.runner import run_matrix, run_one
+from src.eval.runner import run_attack, run_defense, run_matrix, run_one
 
 
 def parse_args(argv: Optional[List[str]] = None):
@@ -44,6 +44,32 @@ def parse_args(argv: Optional[List[str]] = None):
         help="Optional global SWExploit prebuilt adversarial patches JSON/JSONL path.",
     )
 
+    attack = sub.add_parser("run_attack", help="Run attack phase only (generate adversarial prompts and patches).")
+    attack.add_argument("--dataset", required=True, choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus"])
+    attack.add_argument("--split", default="test")
+    attack.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids")
+    attack.add_argument("--limit", type=int, default=None)
+    attack.add_argument("--agent", required=True)
+    attack.add_argument("--attack", required=True)
+    attack.add_argument("--fidelity-mode", default="llm", choices=["llm", "surrogate_debug"])
+    attack.add_argument(
+        "--swexploit-adv-patches",
+        default=None,
+        help="Optional path to SWExploit prebuilt adversarial patches JSON/JSONL.",
+    )
+    attack.add_argument("--out", required=True)
+    attack.add_argument("--config-dir", default="configs")
+
+    defense = sub.add_parser("run_defense", help="Run defense phase only (evaluate defense on pre-generated attack results).")
+    defense.add_argument("--attack-results", required=True, help="Path to attack_results.jsonl from run_attack")
+    defense.add_argument("--baseline", required=True)
+    defense.add_argument("--fidelity-mode", default="llm", choices=["llm", "surrogate_debug"])
+    defense.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids (filter to test set)")
+    defense.add_argument("--limit", type=int, default=None)
+    defense.add_argument("--out", required=True)
+    defense.add_argument("--config-dir", default="configs")
+    defense.add_argument("--run-judges", action="store_true")
+
     sub.add_parser("list_baselines", help="List registered defense/baseline plugins.")
 
     return parser.parse_args(argv)
@@ -75,6 +101,42 @@ def main(argv: Optional[List[str]] = None) -> int:
             cli_invocation=cli_invocation,
             run_judges=bool(args.run_judges),
             swexploit_adv_patches=args.swexploit_adv_patches,
+        )
+        return 0
+
+    if args.command == "run_attack":
+        instance_ids = None
+        if args.instance_id:
+            instance_ids = [x.strip() for x in args.instance_id.split(",") if x.strip()]
+        run_attack(
+            dataset_name=args.dataset,
+            split=args.split,
+            instance_ids=instance_ids,
+            limit=args.limit,
+            agent_name=args.agent,
+            attack_name=args.attack,
+            fidelity_mode=args.fidelity_mode,
+            out_dir=Path(args.out),
+            config_dir=Path(args.config_dir),
+            cli_invocation=cli_invocation,
+            swexploit_adv_patches=args.swexploit_adv_patches,
+        )
+        return 0
+
+    if args.command == "run_defense":
+        instance_ids = None
+        if args.instance_id:
+            instance_ids = [x.strip() for x in args.instance_id.split(",") if x.strip()]
+        run_defense(
+            attack_results_path=Path(args.attack_results),
+            baseline_name=args.baseline,
+            fidelity_mode=args.fidelity_mode,
+            out_dir=Path(args.out),
+            config_dir=Path(args.config_dir),
+            cli_invocation=cli_invocation,
+            instance_ids=instance_ids,
+            limit=args.limit,
+            run_judges=bool(args.run_judges),
         )
         return 0
 
