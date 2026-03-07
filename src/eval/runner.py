@@ -37,14 +37,18 @@ def _load_configs(
     dataset_name: str,
     agent_name: str,
     attack_name: str,
-    baseline_name: str,
+    baseline_name: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    return {
+    configs = {
         "dataset": load_component_config(config_dir, "datasets", dataset_name),
         "agent": load_component_config(config_dir, "agents", agent_name),
         "attack": load_component_config(config_dir, "attacks", attack_name),
-        "baseline": load_component_config(config_dir, "baselines", baseline_name),
     }
+    if baseline_name is not None:
+        configs["baseline"] = load_component_config(config_dir, "baselines", baseline_name)
+    else:
+        configs["baseline"] = {}
+    return configs
 
 
 def _tool_availability(agent_cfg: Dict[str, Any]) -> Dict[str, bool]:
@@ -182,7 +186,7 @@ def run_attack(
         dataset_name=dataset_name,
         agent_name=agent_name,
         attack_name=attack_name,
-        baseline_name="none",
+        baseline_name=None,  # Skip baseline loading for attack-only phase
     )
     
     if swexploit_adv_patches and attack_name == "swexploit":
@@ -460,6 +464,11 @@ def run_defense(
     agent_name = str(first_row.get("agent_name", "unknown"))
     attack_name = str(first_row.get("attack_name", "unknown"))
     
+    # Load agent config for potential prompt-edit reruns
+    agent_config = load_component_config(config_dir, "agents", agent_name)
+    agent_config_hash = config_hash(agent_config)
+    agent_plugin = str(agent_config.get("plugin", agent_name))
+    
     baseline_config = load_component_config(config_dir, "baselines", baseline_name)
     baseline_config_hash = config_hash(baseline_config)
     baseline_plugin = str(baseline_config.get("plugin", baseline_name))
@@ -473,6 +482,7 @@ def run_defense(
                 completed_instance_ids.add(str(row.get("instance_id", "")))
     
     llm_client = LLMClient(out_dir / "artifacts" / "llm_cache")
+    agent_obj = get_agent(agent_plugin)(agent_config)
     baseline_obj = get_baseline(baseline_plugin)(
         baseline_config, llm_client, baseline_config_hash, out_dir, fidelity_mode
     )
@@ -527,6 +537,11 @@ def run_defense(
             if adv_prompt_file.exists():
                 adv_prompt = adv_prompt_file.read_text(encoding="utf-8").strip()
         
+        ori_patch_path = Path(attack_row.get("patch_artifacts", {}).get("ori_patch_path", ""))
+        ori_patch_diff = ""
+        if ori_patch_path.exists():
+            ori_patch_diff = ori_patch_path.read_text(encoding="utf-8").strip()
+        
         adv_patch_path = Path(attack_row.get("patch_artifacts", {}).get("adv_patch_path", ""))
         adv_patch_diff = ""
         if adv_patch_path.exists():
@@ -563,9 +578,12 @@ def run_defense(
                 final_patch = Patch(unified_diff=decision_raw, metadata={"edited_by_defense": True})
                 edited_patch_hash = sha256_text(decision_raw)
             else:
-                defense_signals["edited_prompt_hash"] = sha256_text(decision_raw)
-                defense_signals["note"] = "prompt_edit_skipped_in_defense_phase"
-                defense_decision = "reject"
+                # rerun agent on edited prompt
+                edited_prompt = decision_raw
+                defense_signals["edited_prompt_hash"] = sha256_text(edited_prompt)
+                replacement_patch = agent_obj.agent(repo_code, edited_prompt, test_specs)
+                final_patch = replacement_patch
+                edited_patch_hash = sha256_text(replacement_patch.unified_diff or "")
         else:
             defense_decision = "reject"
         
@@ -593,7 +611,7 @@ def run_defense(
         patch_paths = _write_patch_artifacts(
             out_dir=out_dir,
             instance_id=instance_id,
-            ori_patch=Patch(unified_diff=attack_row.get("ori_patch_hash", "")),
+            ori_patch=Patch(unified_diff=ori_patch_diff),
             adv_patch=Patch(unified_diff=adv_patch_diff),
             final_patch=final_patch,
             apply_status={"applied": apply_ok, "message": apply_message},
