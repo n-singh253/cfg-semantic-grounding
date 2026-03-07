@@ -7,13 +7,16 @@ as defenses against adversarial prompts. It includes:
   2. Training - Fine-tune transformer models (BERT, RoBERTa, etc.)
   3. Evaluation - Use trained model as defense plugin
 
+Configurations:
+  - Training: Use configs/baselines/sequence_classifiers_train.yaml
+  - Inference: Use configs/baselines/sequence_classifiers_inference.yaml
+
 Usage:
-    # Run complete pipeline (data prep + training)
-    python -m src.baseline.sequence_classifiers.sequence_classifiers \\
-        --config configs/baselines/sequence_classifiers.yaml
+    # Run training pipeline
+    python -m src.baseline.sequence_classifiers --config configs/baselines/sequence_classifiers_train.yaml
     
-    # Use as defense plugin (automatic via runner)
-    python -m src.runner --baseline-config configs/baselines/sequence_classifiers.yaml
+    # Use as defense plugin in evaluation
+    python -m src.eval.cli run_one --baseline sequence_classifiers --dataset toy --agent dummy --attack none
 """
 
 from __future__ import annotations
@@ -43,6 +46,7 @@ from sklearn.metrics import (
 
 from src.baseline.base import BaseDefense
 from src.baseline.common.data_preparation import prepare_training_data
+from src.baseline.registry import register_baseline
 from src.common.llm import LLMClient
 from src.common.types import DefenseReturn
 
@@ -351,12 +355,16 @@ class SequenceClassifierDefense(BaseDefense):
     the prompt as benign or malicious. It only considers the prompt,
     ignoring the patch.
     
-    Config options:
-        model_path: Path to trained model directory (required)
+    Config file: configs/baselines/sequence_classifiers_inference.yaml
+    
+    Required config keys:
+        model_path: Path to trained model directory
+    
+    Optional config keys:
         max_length: Maximum sequence length (default: 512)
         threshold: Classification threshold (default: 0.5)
         device: Device to use ('cuda', 'cpu', or 'auto', default: 'auto')
-        surrogate_mode: If True, use dummy classification (for testing)
+        surrogate_mode: If True, use dummy classification for testing (default: False)
     """
     
     name = "sequence_classifiers"
@@ -370,6 +378,9 @@ class SequenceClassifierDefense(BaseDefense):
         fidelity_mode: str,
     ) -> None:
         super().__init__(config, llm_client, baseline_config_hash, run_root, fidelity_mode)
+        
+        # Validate inference config (should only contain inference keys)
+        self._validate_inference_config(config)
         
         self.max_length = int(config.get("max_length", 512))
         self.threshold = float(config.get("threshold", 0.5))
@@ -386,7 +397,10 @@ class SequenceClassifierDefense(BaseDefense):
         if not self.surrogate_mode:
             model_path = config.get("model_path")
             if not model_path:
-                raise ValueError("model_path is required in config")
+                raise ValueError(
+                    "model_path is required in config. "
+                    "Use configs/baselines/sequence_classifiers_inference.yaml as template."
+                )
             
             model_path = Path(model_path)
             if not model_path.exists():
@@ -402,6 +416,22 @@ class SequenceClassifierDefense(BaseDefense):
         else:
             self.tokenizer = None
             self.model = None
+    
+    def _validate_inference_config(self, config: Dict[str, Any]) -> None:
+        """
+        Validate that config is for inference, not training.
+        
+        Raises ValueError if training-only keys are present.
+        """
+        training_only_keys = ["data_preparation", "training"]
+        found_training_keys = [key for key in training_only_keys if key in config]
+        
+        if found_training_keys:
+            raise ValueError(
+                f"Config contains training-only keys: {found_training_keys}. "
+                "For inference/defense, use configs/baselines/sequence_classifiers_inference.yaml. "
+                "For training, run: python -m src.baseline.sequence_classifiers --config configs/baselines/sequence_classifiers_train.yaml"
+            )
     
     def _classify_prompt(self, prompt: str) -> Dict[str, Any]:
         """
@@ -501,11 +531,26 @@ class SequenceClassifierDefense(BaseDefense):
 
 def run_pipeline(config: Dict[str, Any]) -> None:
     """
-    Run the complete pipeline: data preparation → training.
+    Run the complete training pipeline: data preparation → training.
+    
+    Config file: configs/baselines/sequence_classifiers_train.yaml
     
     Args:
-        config: Configuration dictionary loaded from YAML
+        config: Configuration dictionary loaded from YAML (must contain data_preparation and training sections)
+    
+    Raises:
+        ValueError: If required training config sections are missing
     """
+    # Validate training config
+    required_sections = ["data_preparation", "training"]
+    missing_sections = [sec for sec in required_sections if sec not in config]
+    
+    if missing_sections:
+        raise ValueError(
+            f"Training config missing required sections: {missing_sections}. "
+            "Use configs/baselines/sequence_classifiers_train.yaml as template."
+        )
+    
     # Step 1: Data Preparation
     data_prep_config = config.get("data_preparation", {})
     
@@ -538,29 +583,47 @@ def run_pipeline(config: Dict[str, Any]) -> None:
 
 
 def main():
-    """Main entry point for running the complete pipeline."""
+    """Main entry point for running the training pipeline."""
 
     parser = argparse.ArgumentParser(
-        description="Sequence Classifier Baseline - Complete Pipeline",
+        description="Sequence Classifier Baseline - Training Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Train a model on SWExploit vs None attack results
+  python -m src.baseline.sequence_classifiers --config configs/baselines/sequence_classifiers_train.yaml
+  
+  # Use trained model as defense in evaluation
+  python -m src.eval.cli run_one --baseline sequence_classifiers --dataset toy --agent dummy --attack none
+        """
     )
     
     parser.add_argument(
         "--config",
         type=Path,
         required=True,
-        help="Path to config YAML file"
+        help="Path to training config YAML file (use sequence_classifiers_train.yaml)"
     )
     
     args = parser.parse_args()
     
     if not args.config.exists():
+        print(f"Error: Config file not found: {args.config}", file=sys.stderr)
         sys.exit(1)
     
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     
-    run_pipeline(config)
+    try:
+        run_pipeline(config)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+# Register defense plugin for use in evaluation runs
+register_baseline("sequence_classifiers")(SequenceClassifierDefense)
+
 
 if __name__ == "__main__":
     main()
