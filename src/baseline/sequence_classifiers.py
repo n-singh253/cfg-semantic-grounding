@@ -29,20 +29,27 @@ import yaml
 from pathlib import Path
 from typing import Any, Dict, List
 
-import torch
-import numpy as np
-from torch.utils.data import Dataset, DataLoader
-from transformers import (
-    AutoTokenizer,
-    AutoModelForSequenceClassification,
-    get_linear_schedule_with_warmup,
-)
-from sklearn.metrics import (
-    accuracy_score,
-    precision_recall_fscore_support,
-    confusion_matrix,
-    classification_report,
-)
+try:
+    import torch
+    import numpy as np
+    from torch.utils.data import Dataset, DataLoader
+    from transformers import (
+        AutoTokenizer,
+        AutoModelForSequenceClassification,
+        get_linear_schedule_with_warmup,
+    )
+    from sklearn.metrics import (
+        accuracy_score,
+        precision_recall_fscore_support,
+        confusion_matrix,
+        classification_report,
+    )
+    ML_DEPS_AVAILABLE = True
+except ImportError as e:
+    ML_DEPS_AVAILABLE = False
+    _IMPORT_ERROR = e
+    class Dataset:
+        pass
 
 from src.baseline.base import BaseDefense
 from src.baseline.common.data_preparation import prepare_training_data
@@ -236,6 +243,13 @@ def train_model(
         warmup_ratio: Ratio of warmup steps
         random_seed: Random seed for reproducibility
     """
+    if not ML_DEPS_AVAILABLE:
+        raise ImportError(
+            f"Training requires torch, transformers, and scikit-learn. "
+            f"Install with: pip install torch transformers scikit-learn. "
+            f"Original error: {_IMPORT_ERROR}"
+        )
+    
     torch.manual_seed(random_seed)
     np.random.seed(random_seed)
     
@@ -377,6 +391,13 @@ class SequenceClassifierDefense(BaseDefense):
         run_root: Path,
         fidelity_mode: str,
     ) -> None:
+        if not ML_DEPS_AVAILABLE:
+            raise ImportError(
+                f"sequence_classifiers baseline requires torch, transformers, and scikit-learn. "
+                f"Install with: pip install torch transformers scikit-learn. "
+                f"Original error: {_IMPORT_ERROR}"
+            )
+        
         super().__init__(config, llm_client, baseline_config_hash, run_root, fidelity_mode)
         
         # Validate inference config (should only contain inference keys)

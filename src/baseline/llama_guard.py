@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-import torch
+try:
+    import torch
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+    TORCH_AVAILABLE = True
+except ImportError as e:
+    TORCH_AVAILABLE = False
+    _IMPORT_ERROR = e
 
 from src.baseline.base import BaseDefense
 from src.baseline.registry import register_baseline
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
 class LlamaGuardDefense(BaseDefense):
@@ -23,6 +28,13 @@ class LlamaGuardDefense(BaseDefense):
         run_root,
         fidelity_mode: str,
     ):
+        if not TORCH_AVAILABLE:
+            raise ImportError(
+                f"llama_guard baseline requires torch and transformers. "
+                f"Install with: pip install torch transformers. "
+                f"Original error: {_IMPORT_ERROR}"
+            )
+        
         super().__init__(config, llm_client, baseline_config_hash, run_root, fidelity_mode)
                 
         # Load model configuration
