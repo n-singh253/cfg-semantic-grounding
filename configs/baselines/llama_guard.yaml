@@ -1,0 +1,12 @@
+name: llama_guard
+plugin: llama_guard
+
+# Model selection (Llama Guard 1-4 have consistent prompt format)
+# Examples:
+#   - meta-llama/Llama-Guard-3-8B (default)
+#   - meta-llama/Llama-Guard-3-11B-Vision
+#   - meta-llama/Llama-Guard-2-8B
+#   - meta-llama/LlamaGuard-7b (Llama Guard 1)
+model: meta-llama/Llama-Guard-3-8B
+
+max_length: 4096

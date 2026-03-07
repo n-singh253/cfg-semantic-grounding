@@ -1,0 +1,30 @@
+# Sequence Classifier Inference Configuration
+#
+# This configuration is used when running sequence_classifiers as a defense baseline
+# in evaluation runs (run_one, run_defense, run_matrix).
+#
+# Usage:
+#   python -m src.eval.cli run_one --baseline sequence_classifiers --dataset toy --agent dummy --attack none
+
+plugin: sequence_classifiers
+
+###### INFERENCE / DEFENSE SETTINGS ######
+
+# Path to trained model directory (required)
+# This should point to the output_dir from training phase
+model_path: data/models/sequence_classifiers/bert_swexploit
+
+# Maximum sequence length for tokenization (must match training)
+max_length: 512
+
+# Classification threshold (0.0 to 1.0)
+# Prompts with malicious score >= threshold are rejected
+threshold: 0.5
+
+# Device for inference: "auto", "cuda", or "cpu"
+# "auto" will use CUDA if available, otherwise CPU
+device: auto
+
+# Surrogate mode for testing (bypasses actual model inference)
+# Set to true for quick dry runs without a trained model
+surrogate_mode: false

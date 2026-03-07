@@ -1,0 +1,57 @@
+# Sequence Classifier Training Configuration
+#
+# This configuration is used for the training pipeline:
+#   1. Data Preparation - Extract and split training data from evaluation results
+#   2. Training - Fine-tune transformer model (BERT, RoBERTa, etc.)
+#
+# Usage:
+#   python -m src.baseline.sequence_classifiers --config configs/baselines/sequence_classifiers_train.yaml
+
+plugin: sequence_classifiers
+
+###### DATA PREPARATION ######
+data_preparation:
+  # Path to benign attack results (e.g., attack_name: none)
+  benign_results_path: out/{benign_run_name}/results.jsonl
+  
+  # Path to malicious attack results (e.g., attack_name: swexploit)
+  malicious_results_path: out/{malicious_run_name}/results.jsonl
+  
+  # Output directory for prepared train/test splits
+  output_dir: data/prepared/swexploit_vs_none
+  
+  # Split strategy options:
+  #   - "stratified_instance": Split by instance_id, preserving class balance
+  #   - "instance_level": All prompts from same instance go to same split
+  #   - "random": Random split regardless of instance
+  split_strategy: stratified_instance
+  
+  # Train/test split ratio
+  train_ratio: 0.8
+  
+  # Random seed for reproducibility
+  random_seed: 42
+  
+  # Optional: Limit instances per class (null = no limit)
+  limit_per_class: null
+
+###### TRAINING ######
+training:
+  # HuggingFace model to fine-tune
+  # Examples: google-bert/bert-base-uncased, FacebookAI/roberta-base
+  model_name: google-bert/bert-base-uncased
+  
+  # Output directory for trained model
+  output_dir: data/models/sequence_classifiers/bert_swexploit
+  
+  # Training hyperparameters
+  epochs: 3
+  batch_size: 16
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.1
+  
+  # Maximum sequence length for tokenization
+  max_length: 512
+  
+  # Random seed for reproducibility
+  random_seed: 42
