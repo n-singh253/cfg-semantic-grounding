@@ -11,3 +11,4 @@ data/
 .env.*
 *.pem
 *.key
+/cfg_semantic_grounding.egg-info

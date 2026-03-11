@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import json
 import re
 import shlex
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -64,19 +66,116 @@ def _strip_markdown_fences(text: str) -> str:
     return raw.strip()
 
 
+def _first_diff_start_index(lines: List[str]) -> int:
+    for idx, line in enumerate(lines):
+        if line.startswith("diff --git ") or line.startswith("--- "):
+            return idx
+    return -1
+
+
+def _extract_diff_block(raw: str) -> str:
+    lines = raw.splitlines()
+    start = _first_diff_start_index(lines)
+    if start < 0:
+        return ""
+
+    header_prefixes = (
+        "diff --git ",
+        "index ",
+        "--- ",
+        "+++ ",
+        "@@",
+        "new file mode ",
+        "deleted file mode ",
+        "similarity index ",
+        "rename from ",
+        "rename to ",
+        "old mode ",
+        "new mode ",
+        "Binary files ",
+    )
+
+    out: List[str] = []
+    for line in lines[start:]:
+        if line.startswith("```"):
+            break
+        if (
+            line.startswith(header_prefixes)
+            or line.startswith("+")
+            or line.startswith("-")
+            or line.startswith(" ")
+            or line == r"\ No newline at end of file"
+        ):
+            out.append(line)
+            continue
+        if out:
+            # Stop once prose/non-diff text begins after diff started.
+            break
+    return "\n".join(out).strip()
+
+
 def _extract_unified_diff(text: str) -> str:
-    raw = _strip_markdown_fences(text)
+    raw = text or ""
     if not raw:
         return ""
-    if "diff --git " in raw:
-        return raw[raw.find("diff --git ") :].strip()
-    if looks_like_unified_diff(raw):
-        # Normalize by starting from first file header when possible.
-        lines = raw.splitlines()
-        for idx, line in enumerate(lines):
-            if line.startswith("--- ") or line.startswith("diff --git "):
-                return "\n".join(lines[idx:]).strip()
-        return raw.strip()
+    extracted = _extract_diff_block(raw)
+    if extracted and looks_like_unified_diff(extracted):
+        return extracted
+
+    fenced = _strip_markdown_fences(raw)
+    extracted_fenced = _extract_diff_block(fenced)
+    if extracted_fenced and looks_like_unified_diff(extracted_fenced):
+        return extracted_fenced
+
+    if looks_like_unified_diff(fenced):
+        return fenced.strip()
+    return ""
+
+
+def _nvm_node_major_from_path(path: str) -> int:
+    match = re.search(r"/\.nvm/versions/node/v(\d+)\.", path)
+    if not match:
+        return -1
+    try:
+        return int(match.group(1))
+    except Exception:
+        return -1
+
+
+def _resolve_cli_executable(executable: str) -> str:
+    resolved = shutil.which(executable)
+    if not resolved:
+        return executable
+
+    if executable not in {"gemini", "gemini-cli"}:
+        return resolved
+
+    current_major = _nvm_node_major_from_path(resolved)
+    if current_major >= 20:
+        return resolved
+
+    nvm_root = Path.home() / ".nvm" / "versions" / "node"
+    if not nvm_root.exists():
+        return resolved
+
+    best = resolved
+    best_major = current_major
+    for candidate in sorted(nvm_root.glob("v*/bin/gemini")):
+        major = _nvm_node_major_from_path(str(candidate))
+        if major >= 20 and major > best_major:
+            best = str(candidate)
+            best_major = major
+    return best
+
+
+def _node_for_nvm_gemini(gemini_executable: str) -> str:
+    # /home/<user>/.nvm/versions/node/v20.20.0/bin/gemini -> .../bin/node
+    path = Path(gemini_executable)
+    if path.name not in {"gemini", "gemini-cli"}:
+        return ""
+    node_path = path.parent / "node"
+    if node_path.exists():
+        return str(node_path)
     return ""
 
 
@@ -118,16 +217,17 @@ def run_cli_agent(
         raise ValueError(f"{agent_name}: config.command must be a non-empty list")
 
     executable = str(command_template[0])
+    resolved_executable = _resolve_cli_executable(executable)
     behavior = str(config.get("missing_tool_behavior", "fail")).lower()
     artifact_dir = _agent_artifact_dir(agent_name, repo_code)
-    if not command_exists(executable):
+    if not command_exists(resolved_executable):
         artifact_dir.mkdir(parents=True, exist_ok=True)
         missing_tool_path = artifact_dir / "missing_tool.json"
         atomic_write_json(
             missing_tool_path,
             {
                 "agent": agent_name,
-                "missing_tool": executable,
+                "missing_tool": resolved_executable,
                 "behavior": behavior,
             },
         )
@@ -143,7 +243,7 @@ def run_cli_agent(
                 },
             )
         raise RuntimeError(
-            f"{agent_name}: missing required CLI tool '{executable}'. "
+            f"{agent_name}: missing required CLI tool '{resolved_executable}'. "
             f"Details: {missing_tool_path}"
         )
 
@@ -178,9 +278,30 @@ def run_cli_agent(
         "base_commit": str(repo_code.get("base_commit", "unknown")),
     }
     command = [str(part).format(**fmt) for part in command_template]
+    if command:
+        if executable in {"gemini", "gemini-cli"}:
+            node_bin = _node_for_nvm_gemini(resolved_executable)
+            if node_bin:
+                command = [node_bin, resolved_executable, *command[1:]]
+            else:
+                command[0] = resolved_executable
+        else:
+            command[0] = resolved_executable
     cwd = Path(str(repo_code.get("path", ".")))
     timeout_sec = int(config.get("timeout_sec", 120))
-    result = run_command(command, cwd=cwd, timeout_sec=timeout_sec)
+    # Gemini CLI reads GEMINI_API_KEY, but this harness commonly uses GOOGLE_API_KEY.
+    # Forward it automatically for command-driven Gemini agents when needed.
+    env_override: Dict[str, str] = {}
+    if executable in {"gemini", "gemini-cli"}:
+        if not os.environ.get("GEMINI_API_KEY") and os.environ.get("GOOGLE_API_KEY"):
+            env_override["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
+
+    result = run_command(
+        command,
+        cwd=cwd,
+        env=env_override or None,
+        timeout_sec=timeout_sec,
+    )
     log_paths = _write_invocation_logs(artifact_dir, command, agent_prompt, result.stdout, result.stderr)
 
     output_mode = str(config.get("output_mode", "stdout"))
@@ -206,6 +327,7 @@ def run_cli_agent(
                     "tool_available": True,
                     "returncode": result.returncode,
                     "empty_output": True,
+                    "env_overrides": sorted(env_override.keys()),
                     "output_parser": output_parser,
                     "command": " ".join(shlex.quote(x) for x in command),
                     **log_paths,
@@ -222,6 +344,7 @@ def run_cli_agent(
             "agent": agent_name,
             "tool_available": True,
             "returncode": result.returncode,
+            "env_overrides": sorted(env_override.keys()),
             "output_parser": output_parser,
             "agent_prompt_hash": sha256_text(agent_prompt),
             "tests_json": tests_serialized,

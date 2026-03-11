@@ -36,6 +36,8 @@ source "${VENV_PATH}/bin/activate"
 
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -e "${ROOT_DIR}"
+# SWE-Bench instance test commands typically use pytest.
+python -m pip install pytest
 python "${ROOT_DIR}/scripts/init_structural_model.py"
 
 if [[ "${WITH_LLM}" -eq 1 ]]; then

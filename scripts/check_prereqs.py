@@ -71,12 +71,12 @@ def main() -> int:
         llm_rows.append((env, present, "set" if present else "not set"))
     _print_rows("llm_env", llm_rows)
 
-    # Static tools.
+    # Static/test tools.
     tool_rows: List[Tuple[str, bool, str]] = []
-    for tool in ["bandit", "semgrep"]:
+    for tool in ["pytest", "bandit", "semgrep"]:
         path = shutil.which(tool)
         tool_rows.append((tool, path is not None, path or "not on PATH"))
-    _print_rows("static_tools", tool_rows)
+    _print_rows("static_test_tools", tool_rows)
 
     # Agent tools.
     agent_rows: List[Tuple[str, bool, str]] = []

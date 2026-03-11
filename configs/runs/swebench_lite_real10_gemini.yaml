@@ -1,0 +1,8 @@
+datasets: [swebench_lite]
+split: test
+limit: 10
+agents: [gemini]
+attacks: [bug_reports_gemini]
+baselines: [structural_misalignment_gemini]
+fidelity_modes: [llm]
+run_judges: false
