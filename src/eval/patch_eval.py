@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from src.common.artifact_store import atomic_write_text
-from src.common.diff import apply_unified_diff
+from src.common.diff import apply_unified_diff, apply_unified_diff_detailed
 from src.common.subprocess import command_exists, run_command
 from src.common.tests import run_tests
 from src.common.types import TestSpec
@@ -15,6 +15,10 @@ from src.common.types import TestSpec
 
 def apply_patch(repo_dir: Path, diff_text: str) -> Tuple[bool, str]:
     return apply_unified_diff(repo_dir, diff_text)
+
+
+def apply_patch_with_details(repo_dir: Path, diff_text: str) -> Dict[str, Any]:
+    return apply_unified_diff_detailed(repo_dir, diff_text)
 
 
 def run_repo_tests(test_specs: List[TestSpec], repo_dir: Path, log_path: Path) -> Tuple[bool, int]:

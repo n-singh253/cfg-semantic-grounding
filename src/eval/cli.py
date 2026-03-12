@@ -33,6 +33,11 @@ def parse_args(argv: Optional[List[str]] = None):
     one.add_argument("--out", required=True)
     one.add_argument("--config-dir", default="configs")
     one.add_argument("--run-judges", action="store_true")
+    one.add_argument("--repo-reset-each-instance", action="store_true", default=True)
+    one.add_argument("--no-repo-reset-each-instance", dest="repo_reset_each_instance", action="store_false")
+    one.add_argument("--max-patch-attempts", type=int, default=2)
+    one.add_argument("--retry-on-apply-failure", action="store_true", default=True)
+    one.add_argument("--no-retry-on-apply-failure", dest="retry_on_apply_failure", action="store_false")
 
     matrix = sub.add_parser("run_matrix", help="Run a matrix experiment.")
     matrix.add_argument("--config", required=True)
@@ -101,6 +106,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             cli_invocation=cli_invocation,
             run_judges=bool(args.run_judges),
             swexploit_adv_patches=args.swexploit_adv_patches,
+            repo_reset_each_instance=bool(args.repo_reset_each_instance),
+            max_patch_attempts=int(args.max_patch_attempts),
+            retry_on_apply_failure=bool(args.retry_on_apply_failure),
         )
         return 0
 

@@ -5,7 +5,7 @@ This version is optimized for readability in a research paper:
 - **Figure 2**: Complete option space currently available in `configs/`.
 - **Figure 3**: Actor-driven paper-style pipeline and outcomes.
 - **Figure 4**: Stylized stepwise overview in the SWExploit-style visual language.
-- **Figure 5**: SWExploit-style pipeline overview with structural misalignment defense internals.
+- **Figure 5**: Semantic misalignment defense internals with explicit module I/O contracts.
 
 ## Figure 1. Core Pipeline (Modules + Input/Output Contracts)
 
@@ -222,91 +222,56 @@ flowchart LR
     REJ --> ART
 ```
 
-## Figure 5. CFG-Semantic Grounding Pipeline (SWExploit-Style Overview)
-
-*Structural Misalignment Detection for APR Patches*
-
-Left-to-right systems diagram in the SWExploit figure style: numbered phase containers, output callout bubbles, and the **Structural Misalignment Defense** as the visually dominant box (the core research contribution). Inputs fork into two parallel tracks (original patch, adversarial attack + patch) that rejoin at the defense module.
+## Figure 5. Semantic Misalignment Defense (Modules + Input/Output Contracts)
 
 ```mermaid
-flowchart LR
-    classDef ribbon fill:#e9f2ff,stroke:#4472c4,stroke-width:1px,color:#111;
-    classDef input fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,color:#222;
-    classDef agent fill:#e8eaf6,stroke:#3949ab,stroke-width:1.5px,color:#111;
-    classDef attack fill:#fce4ec,stroke:#c62828,stroke-width:1.5px,color:#111;
-    classDef defense fill:#e0f2f1,stroke:#00695c,stroke-width:1.5px,color:#111;
-    classDef evalbox fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px,color:#111;
-    classDef callout fill:#fff8e1,stroke:#f57f17,stroke-width:1.5px,color:#111;
+flowchart TB
+    classDef stage fill:#f7f7f7,stroke:#222,stroke-width:1px,color:#111;
+    classDef gate fill:#fff8e6,stroke:#8a6d1f,stroke-width:1px,color:#111;
+    classDef out fill:#eef7ff,stroke:#2b6cb0,stroke-width:1px,color:#111;
+    classDef fail fill:#fdecec,stroke:#b42318,stroke-width:1px,color:#111;
 
-    LEG["Step 1: Patch Generation --- Step 2: Attack Generation --- Step 3: Defense + Evaluation"]:::ribbon
+    I0[(0) Defense invocation]:::stage
+    C1[(1) Config normalize and parser selection]:::stage
+    P1[(2) Patch parser cfg_ast or llm_chunks]:::stage
+    S1[(3) CFG stats computation and diagnostics]:::stage
+    T1[(4) Prompt parser llm_subtasks]:::stage
+    G1[(5) Linker llm_grounding or embedding_similarity]:::stage
+    M1[(6) Model bundle load and schema checks]:::stage
+    MF{(7) Mode family}:::gate
+    F1[(8a) Structural feature extraction]:::stage
+    F2[(8b) Universal feature extraction]:::stage
+    F3[(8c) Optional severity analysis for universal modes]:::stage
+    I1[(9) Inference predict_reject_score]:::stage
+    D1[(10) Policy decide_from_policy threshold]:::stage
+    O1[(11) Boolean defense decision]:::out
+    O2[(12) last_signals plus artifact_paths plus stage_status]:::out
+    E1[(Error path stage_failed plus failure_flags)]:::fail
 
-    subgraph INPUTS["Pipeline Inputs"]
-        direction TB
-        IN_INST["Dataset Instance -- SWE-Bench Lite / Pro / Plus, repo_id, base_commit, issue prompt"]:::input
-        IN_REPO["Repo Snapshot -- checked-out codebase, test suite"]:::input
-        IN_CFG["Config -- attack family, patch agent, defense mode"]:::input
-    end
+    I0 -->|prompt + code_or_patch + repo_code + config| C1
+    C1 -->|mode + threshold + decision_policy + parser names| P1
+    P1 -->|cfg_diff + candidate_nodes + cfg_diagnostics| S1
+    S1 -->|cfg_stats artifact| T1
+    T1 -->|subtasks + llm metadata| G1
+    G1 -->|links + grounding metadata| M1
+    M1 -->|model + scaler + imputer + optional vectorizer + feature_list| MF
+    MF -->|structural_only similarity_only structural_combined| F1
+    MF -->|full_universal severity_only_universal no_security| F2
+    F2 -->|if universal mode| F3
+    F1 -->|feature_row + selected_columns| I1
+    F2 -->|feature_row + selected_columns| I1
+    F3 -->|severity payload| I1
+    I1 -->|score + missing_feature_columns_filled_zero| D1
+    D1 -->|accepted bool| O1
+    D1 -->|key_metrics + parser metadata + model_output + artifacts| O2
 
-    subgraph P1["1. Original Patch Generation"]
-        direction TB
-        P1_AGT["APR Agent -- MiniSWEAgent, SWEAgent, OpenHands, Claude Code, Gemini CLI"]:::agent
-        P1_SIG["agent(repo_code, ori_prompt, tests)"]:::agent
-        P1_AGT --> P1_SIG
-    end
-
-    ORI(["ori_patch"]):::callout
-
-    subgraph P2["2. Adversarial Prompt Generation"]
-        direction TB
-        P2_ATK["Attack Module -- Bug Reports, UDora, SWExploit, FCV"]:::attack
-        P2_SIG["attack(repo_code, ori_prompt, tests)"]:::attack
-        P2_NOTE["LLM-based, fidelity_mode = llm"]:::attack
-        P2_ATK --> P2_SIG
-        P2_SIG ~~~ P2_NOTE
-    end
-
-    ADVP(["adv_prompt"]):::callout
-
-    subgraph P3["3. Attacked Patch Generation"]
-        direction TB
-        P3_AGT["APR Agent -- same selectable agent family"]:::agent
-        P3_SIG["agent(repo_code, adv_prompt, tests)"]:::agent
-        P3_AGT --> P3_SIG
-    end
-
-    ADVPATCH(["adv_patch"]):::callout
-
-    subgraph P4["4. Structural Misalignment Defense"]
-        direction TB
-        D1["CFG Diff Extraction -- patch vs. original repo, changed CFG nodes, CFG stats"]:::defense
-        D2["Subtask Decomposition -- LLM derives subtasks from prompt"]:::defense
-        D3["Subtask-to-CFG Grounding -- link subtasks to changed code regions"]:::defense
-        D4["Structural Justification Features -- coverage, justification_gap, entropy, unmatched nodes/subtasks"]:::defense
-        D5["ML-Based Accept/Reject Decision -- sklearn classifier, threshold policy"]:::defense
-        D1 --> D2 --> D3 --> D4 --> D5
-    end
-
-    VERDICT(["accept / reject"]):::callout
-
-    subgraph P5["5. Evaluation and Provenance"]
-        direction TB
-        P5_RUN["Patch apply, test suite, bandit / semgrep, LLM judges"]:::evalbox
-        P5_OUT["results.jsonl, summary.csv, integration_spec.json"]:::evalbox
-        P5_ART["Patch artifacts, defense artifacts, logs"]:::evalbox
-        P5_RUN --> P5_OUT --> P5_ART
-    end
-
-    LEG ~~~ IN_INST
-    IN_INST --> P1_AGT
-    IN_INST --> P2_ATK
-    P1_SIG --> ORI
-    P2_SIG --> ADVP
-    ADVP --> P3_AGT
-    P3_SIG --> ADVPATCH
-    ORI --> D1
-    ADVPATCH --> D1
-    D5 --> VERDICT
-    VERDICT --> P5_RUN
+    P1 -->|exception| E1
+    T1 -->|exception| E1
+    G1 -->|exception| E1
+    M1 -->|exception| E1
+    I1 -->|exception| E1
+    E1 -->|return False + error signals| O1
+    E1 --> O2
 ```
 
 ## Module I/O Table (for Caption/Appendix)

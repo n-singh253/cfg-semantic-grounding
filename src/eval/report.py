@@ -36,6 +36,10 @@ def write_summary_csv(summary_path: Path, rows: List[Dict]) -> Path:
                 "fidelity_mode": row.get("fidelity_mode"),
                 "defense_decision": row.get("defense_decision"),
                 "tests_passed": row.get("tests_passed"),
+                "apply_ok": row.get("apply_ok"),
+                "apply_method": row.get("apply_method"),
+                "apply_failure_reason_code": row.get("apply_failure_reason_code"),
+                "attempt_count": row.get("attempt_count"),
                 "static_findings_count": row.get("static_findings_count"),
                 "runtime_sec": row.get("runtime_sec"),
             }

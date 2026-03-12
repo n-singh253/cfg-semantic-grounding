@@ -6,3 +6,6 @@ attacks: [bug_reports_gemini]
 baselines: [structural_misalignment_gemini]
 fidelity_modes: [llm]
 run_judges: false
+repo_reset_each_instance: true
+max_patch_attempts: 2
+retry_on_apply_failure: true

@@ -21,9 +21,12 @@ from src.common.types import Patch
 def _agent_artifact_dir(agent_name: str, repo_code: Dict[str, Any]) -> Path:
     run_root = repo_code.get("run_root")
     instance_id = str(repo_code.get("instance_id", "unknown"))
+    artifact_tag = str(repo_code.get("agent_artifact_tag", "") or "").strip()
     if run_root:
-        return Path(str(run_root)) / "artifacts" / "agents" / instance_id / agent_name
-    return Path(str(repo_code.get("path", "."))) / ".agent_artifacts" / agent_name
+        base = Path(str(run_root)) / "artifacts" / "agents" / instance_id / agent_name
+        return base / artifact_tag if artifact_tag else base
+    base = Path(str(repo_code.get("path", "."))) / ".agent_artifacts" / agent_name
+    return base / artifact_tag if artifact_tag else base
 
 
 def _serialize_tests(all_tests: List[Any]) -> str:
