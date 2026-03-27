@@ -50,6 +50,7 @@ import src.baseline.structural_misalignment.parsers.patch.cfg_ast  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.llm_chunks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.llm_grounding  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.embedding_similarity  # noqa: F401
+import src.baseline.structural_misalignment.parsers.patch.cfg_ast_scoped  # noqa: F401
 
 
 class StructuralMisalignmentDefense(BaseDefense):
@@ -344,6 +345,11 @@ class StructuralMisalignmentDefense(BaseDefense):
                 "cfg_diagnostics": cfg_diagnostics,
                 "candidate_node_count": len(candidate_nodes),
             }
+            # Include risk analysis from scoped parser if available
+            if cfg_diagnostics.get("risk_features"):
+                cfg_payload["risk_features"] = cfg_diagnostics["risk_features"]
+            if cfg_diagnostics.get("risk_analysis"):
+                cfg_payload["risk_analysis_summary"] = cfg_diagnostics["risk_analysis"]
             cfg_stats_path = write_hashed_json_artifact(
                 defense_root / "cfg_stats.json",
                 cfg_payload,
