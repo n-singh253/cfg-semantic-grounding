@@ -501,6 +501,16 @@ class StructuralMisalignmentDefense(BaseDefense):
                     "universal_features_all": universal_full,
                 }
 
+            # Merge risk features from the scoped parser into the feature row.
+            # predict_reject_score() iterates bundle.feature_list and ignores
+            # columns not in that list, so extra keys here are harmless for
+            # models that weren't trained on risk features.  Models that *were*
+            # trained on them will pick them up automatically.
+            risk_features = cfg_diagnostics.get("risk_features")
+            if isinstance(risk_features, dict):
+                for col, val in risk_features.items():
+                    feature_row.setdefault(col, float(val))
+
             canonical_feature_set = feature_set_name(mode)
             features_payload = {
                 "mode": mode,

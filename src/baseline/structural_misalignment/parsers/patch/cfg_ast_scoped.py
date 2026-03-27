@@ -25,6 +25,30 @@ from src.baseline.structural_misalignment.parsers.registry import register_patch
 from src.common.diff import apply_unified_diff
 
 
+def _restore_scope_depth(
+    candidates: List[Dict[str, Any]],
+    cfg_data: Dict[str, Any],
+) -> None:
+    """Re-attach ``scope_depth`` to candidates from the scoped CFG data.
+
+    ``get_diff_candidate_nodes`` copies only a fixed set of fields, so
+    ``scope_depth`` is lost.  This rebuilds the mapping from node_id to
+    scope_depth in the after-CFG and patches it back onto candidates.
+    """
+    node_id_to_depth: Dict[str, int] = {}
+    for file_cfg in cfg_data.get("files", {}).values():
+        for func_cfg in file_cfg.get("functions", {}).values():
+            depth = func_cfg.get("scope_depth", 1)
+            for node in func_cfg.get("nodes", []):
+                nid = str(node.get("node_id", ""))
+                if nid:
+                    node_id_to_depth[nid] = int(node.get("scope_depth", depth))
+
+    for cand in candidates:
+        nid = str(cand.get("node_id", ""))
+        cand["scope_depth"] = node_id_to_depth.get(nid, -1)
+
+
 def cfg_ast_scoped_parser(
     patch_text: str,
     *,
@@ -92,6 +116,10 @@ def cfg_ast_scoped_parser(
                 cfg_after = build_scoped_cfg_for_files(touched, base_path=str(patched_repo))
                 cfg_diff = diff_cfg(cfg_before, cfg_after)
                 candidates = get_diff_candidate_nodes(cfg_diff)
+
+                # get_diff_candidate_nodes copies a fixed set of fields,
+                # dropping scope_depth. Re-attach it from the after-CFG nodes.
+                _restore_scope_depth(candidates, cfg_after)
 
                 # Attach scope info from scoped builder
                 diagnostics["scoped_stats"] = {

@@ -25,21 +25,25 @@ def analyze_node_risk(
             path to set of added/modified line numbers.
         covered_lines_by_file: Optional mapping of file path to set of line
             numbers covered by tests (e.g., from pytest-cov JSON). If *None*,
-            all patched lines are treated as uncovered (worst-case).
+            coverage is treated as unavailable and all patched nodes get
+            neutral risk scores (not worst-case).
 
     Returns:
         Dict with:
         - ``high_risk``: list of nodes that are patched but NOT covered
         - ``safe``: list of nodes that are patched AND covered
+        - ``coverage_unknown``: list of patched nodes when coverage is unavailable
         - ``unpatched``: list of nodes with no patch overlap
         - ``risk_scores``: dict mapping node_id to a float risk score (0-1)
         - ``summary``: aggregate statistics
     """
-    if covered_lines_by_file is None:
+    coverage_available = covered_lines_by_file is not None
+    if not coverage_available:
         covered_lines_by_file = {}
 
     high_risk: List[Dict[str, Any]] = []
     safe: List[Dict[str, Any]] = []
+    coverage_unknown: List[Dict[str, Any]] = []
     unpatched: List[Dict[str, Any]] = []
     risk_scores: Dict[str, float] = {}
 
@@ -56,16 +60,29 @@ def analyze_node_risk(
 
         node_lines = set(range(start, end + 1))
         patched = patched_lines_by_file.get(file_path, set())
-        covered = covered_lines_by_file.get(file_path, set())
 
         lines_in_patch = node_lines & patched
-        lines_covered = node_lines & covered
 
         if not lines_in_patch:
             unpatched.append(node)
             risk_scores[node_id] = 0.0
             continue
 
+        # When coverage data is not available, classify patched nodes as
+        # "coverage_unknown" with neutral scores instead of assuming worst-case.
+        if not coverage_available:
+            risk_scores[node_id] = 0.0
+            coverage_unknown.append({
+                **node,
+                "patched_line_count": len(lines_in_patch),
+                "covered_line_count": 0,
+                "uncovered_patch_line_count": 0,
+                "risk_score": 0.0,
+            })
+            continue
+
+        covered = covered_lines_by_file.get(file_path, set())
+        lines_covered = node_lines & covered
         uncovered_patch_lines = lines_in_patch - covered
         total_node_lines = max(len(node_lines), 1)
 
@@ -90,15 +107,17 @@ def analyze_node_risk(
     return {
         "high_risk": high_risk,
         "safe": safe,
+        "coverage_unknown": coverage_unknown,
         "unpatched": unpatched,
         "risk_scores": risk_scores,
         "summary": {
             "total_nodes": total,
             "high_risk_count": len(high_risk),
             "safe_count": len(safe),
+            "coverage_unknown_count": len(coverage_unknown),
             "unpatched_count": len(unpatched),
             "high_risk_ratio": len(high_risk) / max(total, 1),
-            "coverage_available": bool(covered_lines_by_file),
+            "coverage_available": coverage_available,
         },
     }
 
@@ -106,12 +125,31 @@ def analyze_node_risk(
 def compute_risk_features(risk_result: Dict[str, Any]) -> Dict[str, float]:
     """Extract numeric features from risk analysis for ML pipeline integration.
 
+    When coverage data was unavailable, all risk features are 0.0 (neutral)
+    and ``risk_coverage_available`` is 0.0 so downstream consumers can
+    distinguish "no risk detected" from "risk unknown".
+
     Returns feature dict compatible with the structural features schema.
     """
     summary = risk_result.get("summary", {})
+    coverage_available = bool(summary.get("coverage_available", False))
     total = max(int(summary.get("total_nodes", 0)), 1)
     high_risk = risk_result.get("high_risk", [])
     safe = risk_result.get("safe", [])
+    coverage_unknown = risk_result.get("coverage_unknown", [])
+
+    if not coverage_available:
+        # Neutral features — coverage was not provided, so risk is unknown.
+        patched_nodes = len(coverage_unknown) + len(high_risk) + len(safe)
+        return {
+            "risk_high_risk_ratio": 0.0,
+            "risk_safe_ratio": 0.0,
+            "risk_avg_score": 0.0,
+            "risk_max_score": 0.0,
+            "risk_patch_density": float(patched_nodes) / total,
+            "risk_uncovered_patch_lines": 0.0,
+            "risk_coverage_available": 0.0,
+        }
 
     # Aggregate risk scores
     all_scores = list(risk_result.get("risk_scores", {}).values())
@@ -131,4 +169,5 @@ def compute_risk_features(risk_result: Dict[str, Any]) -> Dict[str, float]:
         "risk_uncovered_patch_lines": float(
             sum(n.get("uncovered_patch_line_count", 0) for n in high_risk)
         ),
+        "risk_coverage_available": 1.0,
     }

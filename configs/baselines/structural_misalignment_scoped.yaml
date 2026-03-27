@@ -1,4 +1,9 @@
-name: structural_misalignment
+# Config variant: selectable as --baseline structural_misalignment_scoped
+# Uses the same "structural_misalignment" plugin but with the scope-aware
+# CFG parser (cfg_ast_scoped) that adds module/class-level analysis and
+# risk scoring.  The "name" field matches the plugin identity; the CLI
+# selects this config by filename stem (structural_misalignment_scoped).
+name: structural_misalignment_scoped
 plugin: structural_misalignment
 mode: structural_combined
 model_path: data/models/structural_misalignment/structural_combined

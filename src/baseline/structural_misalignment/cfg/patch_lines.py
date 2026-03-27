@@ -27,16 +27,20 @@ def parse_patch_lines(patch_content: str) -> Dict[str, Set[int]]:
     current_lines: Set[int] = set()
     current_line_idx = 0
 
-    file_header = re.compile(r"^\+\+\+ b/(.*)")
     hunk_header = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 
     for line in patch_content.splitlines():
-        fmatch = file_header.match(line)
-        if fmatch:
-            if current_file:
-                file_changes[current_file] = current_lines
-            current_file = fmatch.group(1)
-            current_lines = set()
+        # Handle +++ headers with or without b/ prefix, and optional tab-separated metadata.
+        if line.startswith("+++ "):
+            raw = line[4:].split("\t", 1)[0].strip()
+            if raw == "/dev/null":
+                continue
+            path = raw[2:] if raw.startswith("b/") else raw
+            if path:
+                if current_file:
+                    file_changes[current_file] = current_lines
+                current_file = path
+                current_lines = set()
             continue
 
         if not current_file:
@@ -47,7 +51,7 @@ def parse_patch_lines(patch_content: str) -> Dict[str, Set[int]]:
             current_line_idx = int(hmatch.group(1)) - 1
             continue
 
-        if line.startswith("+++") or line.startswith("---"):
+        if line.startswith("---"):
             continue
 
         if line.startswith("+"):
