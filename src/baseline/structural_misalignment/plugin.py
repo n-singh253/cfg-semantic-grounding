@@ -50,6 +50,7 @@ import src.baseline.structural_misalignment.parsers.patch.cfg_ast  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.llm_chunks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.llm_grounding  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.embedding_similarity  # noqa: F401
+import src.baseline.structural_misalignment.parsers.patch.cfg_ast_scoped  # noqa: F401
 
 
 class StructuralMisalignmentDefense(BaseDefense):
@@ -344,6 +345,11 @@ class StructuralMisalignmentDefense(BaseDefense):
                 "cfg_diagnostics": cfg_diagnostics,
                 "candidate_node_count": len(candidate_nodes),
             }
+            # Include risk analysis from scoped parser if available
+            if cfg_diagnostics.get("risk_features"):
+                cfg_payload["risk_features"] = cfg_diagnostics["risk_features"]
+            if cfg_diagnostics.get("risk_analysis"):
+                cfg_payload["risk_analysis_summary"] = cfg_diagnostics["risk_analysis"]
             cfg_stats_path = write_hashed_json_artifact(
                 defense_root / "cfg_stats.json",
                 cfg_payload,
@@ -494,6 +500,16 @@ class StructuralMisalignmentDefense(BaseDefense):
                     "marker_debug_enabled": bool(self.config.get("enable_marker_debug_mode", False)),
                     "universal_features_all": universal_full,
                 }
+
+            # Merge risk features from the scoped parser into the feature row.
+            # predict_reject_score() iterates bundle.feature_list and ignores
+            # columns not in that list, so extra keys here are harmless for
+            # models that weren't trained on risk features.  Models that *were*
+            # trained on them will pick them up automatically.
+            risk_features = cfg_diagnostics.get("risk_features")
+            if isinstance(risk_features, dict):
+                for col, val in risk_features.items():
+                    feature_row.setdefault(col, float(val))
 
             canonical_feature_set = feature_set_name(mode)
             features_payload = {
