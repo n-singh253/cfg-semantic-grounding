@@ -369,20 +369,52 @@ def apply_unified_diff_detailed(repo_dir: Path, diff_text: str) -> Dict[str, obj
                 }
             attempts.append((strip, f"git_apply_3way: {apply_3way_out}".strip()))
 
+        patch_variants: List[Tuple[str, List[str]]] = [
+            ("patch", []),
+            ("patch_ws", ["-l"]),
+            ("patch_fuzz3", ["-F", "3"]),
+            ("patch_fuzz3_ws", ["-F", "3", "-l"]),
+            ("patch_fuzz10_ws", ["-F", "10", "-l"]),
+        ]
         for strip in strip_levels:
-            patch_cmd = ["patch", f"-p{strip}", "--forward", "--batch", "--input", str(patch_path)]
-            patch_res = run_command(patch_cmd, cwd=repo_dir)
-            patch_out = _patch_output(patch_res.stdout, patch_res.stderr)
-            if patch_res.returncode == 0:
-                return {
-                    "applied": True,
-                    "method_used": f"patch_p{strip}",
-                    "reason_code": "applied",
-                    "raw_output": patch_out,
-                    "validation": validation,
-                    "sanitized_diff": patch_text,
-                }
-            attempts.append((strip, f"patch: {patch_out}".strip()))
+            for variant_name, extra_flags in patch_variants:
+                dry_cmd = [
+                    "patch",
+                    f"-p{strip}",
+                    "--forward",
+                    "--batch",
+                    "--dry-run",
+                    *extra_flags,
+                    "--input",
+                    str(patch_path),
+                ]
+                dry_res = run_command(dry_cmd, cwd=repo_dir)
+                dry_out = _patch_output(dry_res.stdout, dry_res.stderr)
+                attempts.append((strip, f"{variant_name}_dry_run: {dry_out}".strip()))
+                if dry_res.returncode != 0:
+                    continue
+
+                patch_cmd = [
+                    "patch",
+                    f"-p{strip}",
+                    "--forward",
+                    "--batch",
+                    *extra_flags,
+                    "--input",
+                    str(patch_path),
+                ]
+                patch_res = run_command(patch_cmd, cwd=repo_dir)
+                patch_out = _patch_output(patch_res.stdout, patch_res.stderr)
+                if patch_res.returncode == 0:
+                    return {
+                        "applied": True,
+                        "method_used": f"{variant_name}_p{strip}",
+                        "reason_code": "applied",
+                        "raw_output": patch_out,
+                        "validation": validation,
+                        "sanitized_diff": patch_text,
+                    }
+                attempts.append((strip, f"{variant_name}: {patch_out}".strip()))
 
         lines = ["Patch apply failed for all attempted strip levels."]
         for strip, out in attempts:

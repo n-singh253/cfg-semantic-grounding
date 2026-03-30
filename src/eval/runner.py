@@ -64,6 +64,45 @@ def _tool_availability(agent_cfg: Dict[str, Any]) -> Dict[str, bool]:
     return flags
 
 
+def _dataset_resume_aliases(
+    *,
+    dataset_name: str,
+    dataset_plugin: str,
+    instances: Sequence[Any],
+) -> set[str]:
+    aliases = {str(dataset_name), str(dataset_plugin)}
+    for instance in instances:
+        dataset_label = getattr(instance, "dataset", "")
+        if dataset_label:
+            aliases.add(str(dataset_label))
+    return {alias for alias in aliases if alias}
+
+
+def _row_matches_resume_target(
+    row: Dict[str, Any],
+    *,
+    dataset_aliases: set[str],
+    dataset_hash: str,
+    agent_hash: str,
+    attack_hash: str,
+    baseline_hash: Optional[str] = None,
+) -> bool:
+    row_dataset_hash = str(row.get("dataset_config_hash", "") or "")
+    if row_dataset_hash:
+        dataset_ok = row_dataset_hash == dataset_hash
+    else:
+        dataset_ok = str(row.get("dataset", "") or "") in dataset_aliases
+    if not dataset_ok:
+        return False
+    if str(row.get("agent_config_hash", "")) != agent_hash:
+        return False
+    if str(row.get("attack_config_hash", "")) != attack_hash:
+        return False
+    if baseline_hash is not None and str(row.get("baseline_config_hash", "")) != baseline_hash:
+        return False
+    return True
+
+
 def _write_patch_artifacts(
     out_dir: Path,
     instance_id: str,
@@ -258,19 +297,6 @@ def run_attack(
     
     config_hashes = {name: config_hash(payload) for name, payload in configs.items()}
     
-    # Check for existing results to enable resume
-    existing_rows: List[Dict[str, Any]] = []
-    completed_instance_ids: set[str] = set()
-    if results_path.exists():
-        existing_rows = load_jsonl_rows(results_path)
-        for row in existing_rows:
-            if (
-                row.get("dataset") == dataset_name
-                and row.get("agent_config_hash") == config_hashes["agent"]
-                and row.get("attack_config_hash") == config_hashes["attack"]
-            ):
-                completed_instance_ids.add(str(row.get("instance_id", "")))
-    
     dataset_plugin = str(configs["dataset"].get("plugin", dataset_name))
     agent_plugin = str(configs["agent"].get("plugin", agent_name))
     attack_plugin = str(configs["attack"].get("plugin", attack_name))
@@ -290,6 +316,26 @@ def run_attack(
         limit=limit,
         instance_ids=list(instance_ids) if instance_ids else None,
     )
+
+    dataset_aliases = _dataset_resume_aliases(
+        dataset_name=dataset_name,
+        dataset_plugin=dataset_plugin,
+        instances=data_result.instances,
+    )
+
+    existing_rows: List[Dict[str, Any]] = []
+    completed_instance_ids: set[str] = set()
+    if results_path.exists():
+        existing_rows = load_jsonl_rows(results_path)
+        for row in existing_rows:
+            if _row_matches_resume_target(
+                row,
+                dataset_aliases=dataset_aliases,
+                dataset_hash=config_hashes["dataset"],
+                agent_hash=config_hashes["agent"],
+                attack_hash=config_hashes["attack"],
+            ):
+                completed_instance_ids.add(str(row.get("instance_id", "")))
     
     tool_flags = _tool_availability(configs["agent"])
     skipped_instances = sum(1 for inst in data_result.instances if inst.instance_id in completed_instance_ids)
@@ -413,6 +459,7 @@ def run_attack(
         
         row = {
             "dataset": instance.dataset,
+            "dataset_config_hash": config_hashes["dataset"],
             "split": instance.split,
             "instance_id": instance.instance_id,
             "repo_id": instance.repo_snapshot.repo_id,
@@ -790,19 +837,6 @@ def run_one(
         configs["attack"]["swexploit_adv_patches"] = str(swexploit_adv_patches)
     config_hashes = {name: config_hash(payload) for name, payload in configs.items()}
 
-    existing_rows: List[Dict[str, Any]] = []
-    completed_instance_ids: set[str] = set()
-    if results_path.exists():
-        existing_rows = load_jsonl_rows(results_path)
-        for row in existing_rows:
-            if (
-                row.get("dataset") == dataset_name
-                and row.get("agent_config_hash") == config_hashes["agent"]
-                and row.get("attack_config_hash") == config_hashes["attack"]
-                and row.get("baseline_config_hash") == config_hashes["baseline"]
-            ):
-                completed_instance_ids.add(str(row.get("instance_id", "")))
-
     dataset_plugin = str(configs["dataset"].get("plugin", dataset_name))
     agent_plugin = str(configs["agent"].get("plugin", agent_name))
     attack_plugin = str(configs["attack"].get("plugin", attack_name))
@@ -826,6 +860,27 @@ def run_one(
         limit=limit,
         instance_ids=list(instance_ids) if instance_ids else None,
     )
+
+    dataset_aliases = _dataset_resume_aliases(
+        dataset_name=dataset_name,
+        dataset_plugin=dataset_plugin,
+        instances=data_result.instances,
+    )
+
+    existing_rows: List[Dict[str, Any]] = []
+    completed_instance_ids: set[str] = set()
+    if results_path.exists():
+        existing_rows = load_jsonl_rows(results_path)
+        for row in existing_rows:
+            if _row_matches_resume_target(
+                row,
+                dataset_aliases=dataset_aliases,
+                dataset_hash=config_hashes["dataset"],
+                agent_hash=config_hashes["agent"],
+                attack_hash=config_hashes["attack"],
+                baseline_hash=config_hashes["baseline"],
+            ):
+                completed_instance_ids.add(str(row.get("instance_id", "")))
 
     tool_flags = _tool_availability(configs["agent"])
     skipped_instances = sum(1 for inst in data_result.instances if inst.instance_id in completed_instance_ids)
@@ -1090,6 +1145,7 @@ def run_one(
         attack_meta = dict(getattr(attack_obj, "last_metadata", {}))
         row = {
             "dataset": instance.dataset,
+            "dataset_config_hash": config_hashes["dataset"],
             "split": instance.split,
             "instance_id": instance.instance_id,
             "repo_id": instance.repo_snapshot.repo_id,

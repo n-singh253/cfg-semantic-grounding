@@ -31,6 +31,7 @@ def write_config_snapshot(path: Path, data: Dict[str, Any]) -> None:
 
 def dataset_config_filename(dataset_name: str) -> str:
     mapping = {
+        "swebench": "swebench.yaml",
         "toy": "toy.yaml",
         "swebench_lite": "lite.yaml",
         "swebench_pro": "pro.yaml",

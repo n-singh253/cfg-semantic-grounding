@@ -45,7 +45,7 @@ def main() -> int:
     parser.add_argument(
         "--dataset",
         default="toy",
-        choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus"],
+        choices=["toy", "swebench", "swebench_lite", "swebench_pro", "swebench_plus"],
         help="Dataset to validate config for",
     )
     parser.add_argument(
@@ -92,6 +92,7 @@ def main() -> int:
 
     # Dataset config checks.
     ds_map = {
+        "swebench": "swebench.yaml",
         "toy": "toy.yaml",
         "swebench_lite": "lite.yaml",
         "swebench_pro": "pro.yaml",

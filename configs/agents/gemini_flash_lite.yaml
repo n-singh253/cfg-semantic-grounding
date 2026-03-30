@@ -1,0 +1,7 @@
+name: gemini_flash_lite
+plugin: gemini_cli
+command: ["gemini", "-m", "gemini-2.5-flash-lite", "-p", "{agent_prompt}"]
+output_mode: stdout
+output_parser: unified_diff_auto
+missing_tool_behavior: skip
+timeout_sec: 900
