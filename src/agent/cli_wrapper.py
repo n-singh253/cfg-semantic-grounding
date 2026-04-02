@@ -68,8 +68,26 @@ def _extract_unified_diff(text: str) -> str:
     raw = _strip_markdown_fences(text)
     if not raw:
         return ""
-    if "diff --git " in raw:
-        return raw[raw.find("diff --git ") :].strip()
+
+    # Find the last occurrence of a diff --git block so we get the final patch
+    # (mini-swe-agent emits its full trajectory to stdout; the real patch is last).
+    last_diff_pos = raw.rfind("diff --git ")
+    if last_diff_pos != -1:
+        candidate = raw[last_diff_pos:].strip()
+        diff_lines: list[str] = []
+        in_diff = False
+        for line in candidate.splitlines():
+            if line.startswith("diff --git ") or line.startswith("--- ") or line.startswith("+++ ") or line.startswith("@@") or line.startswith(" ") or line.startswith("+") or line.startswith("-") or line.startswith("index ") or line.startswith("new file") or line.startswith("deleted file") or line.startswith("rename ") or line.startswith("similarity "):
+                in_diff = True
+                diff_lines.append(line)
+            elif in_diff and line == "":
+                diff_lines.append(line)
+            elif in_diff:
+                break
+        result = "\n".join(diff_lines).strip()
+        if result:
+            return result
+
     if looks_like_unified_diff(raw):
         # Normalize by starting from first file header when possible.
         lines = raw.splitlines()
