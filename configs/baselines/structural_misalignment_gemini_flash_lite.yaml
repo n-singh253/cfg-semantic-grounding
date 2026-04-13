@@ -1,31 +1,17 @@
 name: structural_misalignment_gemini_flash_lite
 plugin: structural_misalignment
-mode: structural_combined
-model_path: data/models/structural_misalignment/structural_combined
-model_paths:
-  structural_only: data/models/structural_misalignment/structural_combined
-  similarity_only: data/models/structural_misalignment/structural_combined
-  structural_combined: data/models/structural_misalignment/structural_combined
-  full_universal: data/models/structural_misalignment/structural_combined
-  severity_only_universal: data/models/structural_misalignment/structural_combined
-  no_security: data/models/structural_misalignment/structural_combined
+gnn_model_path: data/models/structural_misalignment/hetero_gnn
 threshold: 0.5
 decision_policy: reject_if_score_ge_threshold
-severity_mode: universal
-enable_marker_debug_mode: false
+seed: 42
 allow_hunk_fallback: true
-allow_hunk_fallback_non_toy: true
-mask_tokens: true
-comment_stripping_mode: python_tokenize
-allow_provider_fallback: false
-allow_provider_fallback_on_toy: true
-llm:
-  provider: gemini
-  model: gemini-2.5-flash-lite
-  temperature: 0.2
-  max_retries: 2
-  backoff_sec: 1.0
-  allow_provider_fallback: false
-  subtasks_system_prompt: |
-    You are helping decompose software bug-fix tasks into generic subtasks.
-    Return concise one-line subtasks as JSON array of strings.
+embedding_model_name: microsoft/codebert-base
+embedding_pooling: mean
+link_similarity_threshold: 0.35
+link_topk_fallback: 1
+gnn_model_type: hetero_sage
+graph_artifact_dir: graph
+parsers:
+  prompt: deterministic_subtasks
+  patch: cfg_ast
+  linking: embedding_similarity

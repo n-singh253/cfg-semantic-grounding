@@ -27,6 +27,11 @@ embeddings = [
   "torch>=2.2",
   "transformers>=4.40",
 ]
+gnn = [
+  "torch>=2.2",
+  "torch-geometric>=2.5",
+  "transformers>=4.40",
+]
 
 [tool.setuptools]
 include-package-data = true

@@ -1,89 +1,53 @@
-"""Model bundle loading for structural misalignment inference."""
+"""Load trained structural misalignment GNN bundles."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-import joblib
+from src.baseline.structural_misalignment.models.gnn import HeteroGraphClassifier
 
 
 @dataclass
-class ModelBundle:
+class GraphModelBundle:
     model: Any
-    imputer: Any
-    scaler: Any
-    feature_list: list[str]
     metadata: Dict[str, Any]
     model_dir: Path
-    vectorizer: Optional[Any] = None
+    checkpoint_path: Path
 
 
-def _resolve_model_dir(model_path: Path) -> Path:
-    if model_path.is_dir():
-        return model_path
-    return model_path.parent
+def load_graph_model_bundle(model_path: str) -> GraphModelBundle:
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise ImportError("Loading structural misalignment GNN bundles requires torch.") from exc
 
-
-def load_model_bundle(model_path: str, *, require_vectorizer: bool = False) -> ModelBundle:
     path = Path(model_path).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"Model path not found: {path}")
 
-    model_dir = _resolve_model_dir(path)
-    model_file = path if path.is_file() else model_dir / "model.joblib"
-    imputer_file = model_dir / "imputer.joblib"
-    scaler_file = model_dir / "scaler.joblib"
-    metadata_file = model_dir / "metadata.json"
-
-    missing = [
-        str(p)
-        for p in [model_file, imputer_file, scaler_file, metadata_file]
-        if not p.exists()
-    ]
-    if missing:
+    model_dir = path if path.is_dir() else path.parent
+    checkpoint = path if path.is_file() else model_dir / "model.pt"
+    metadata_path = model_dir / "metadata.json"
+    if not checkpoint.exists() or not metadata_path.exists():
         raise FileNotFoundError(
-            "Model bundle incomplete. Missing required artifact(s): " + ", ".join(missing)
+            f"Model bundle incomplete at {model_dir}. Expected model.pt and metadata.json."
         )
 
-    model = joblib.load(model_file)
-    imputer = joblib.load(imputer_file)
-    scaler = joblib.load(scaler_file)
-    metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
-
-    feature_list = metadata.get("feature_list")
-    if not isinstance(feature_list, list) or not all(isinstance(c, str) for c in feature_list):
-        raise ValueError(f"Invalid model metadata feature_list in {metadata_file}")
-
-    vectorizer = None
-    vectorizer_path = metadata.get("vectorizer_path")
-    candidate = None
-    if isinstance(vectorizer_path, str) and vectorizer_path.strip():
-        candidate = Path(vectorizer_path)
-        if not candidate.is_absolute():
-            candidate = (model_dir / candidate).resolve()
-    else:
-        maybe = model_dir / "tfidf_vectorizer.pkl"
-        if maybe.exists():
-            candidate = maybe
-
-    if candidate is not None and candidate.exists():
-        vectorizer = joblib.load(candidate)
-
-    if require_vectorizer and vectorizer is None:
-        raise FileNotFoundError(
-            f"Vectorizer artifact required but missing for model bundle at {model_dir}. "
-            "Expected metadata.vectorizer_path or tfidf_vectorizer.pkl"
-        )
-
-    return ModelBundle(
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    model = HeteroGraphClassifier(
+        input_dim=int(metadata.get("input_dim", 768)),
+        hidden_dim=int(metadata.get("hidden_dim", 128)),
+        dropout=float(metadata.get("dropout", 0.1)),
+    )
+    state = torch.load(checkpoint, map_location="cpu")
+    model.load_state_dict(state)
+    model.eval()
+    return GraphModelBundle(
         model=model,
-        imputer=imputer,
-        scaler=scaler,
-        feature_list=feature_list,
         metadata=metadata,
         model_dir=model_dir,
-        vectorizer=vectorizer,
+        checkpoint_path=checkpoint,
     )

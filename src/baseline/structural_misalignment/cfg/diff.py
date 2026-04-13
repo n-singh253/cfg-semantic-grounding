@@ -204,6 +204,29 @@ def get_diff_candidate_nodes(cfg_diff: Dict[str, Any]) -> List[Dict[str, Any]]:
     return nodes
 
 
+def get_candidate_code_edges(cfg_after: Dict[str, Any], candidate_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    candidate_ids = {str(node.get("node_id", "")) for node in candidate_nodes if node.get("node_id")}
+    if not candidate_ids:
+        return []
+
+    edges: List[Dict[str, Any]] = []
+    for file_cfg in _extract_files(cfg_after).values():
+        for func_cfg in file_cfg.get("functions", {}).values():
+            for edge in func_cfg.get("edges", []):
+                src = str(edge.get("src", ""))
+                dst = str(edge.get("dst", ""))
+                if src not in candidate_ids or dst not in candidate_ids:
+                    continue
+                edges.append(
+                    {
+                        "src": src,
+                        "dst": dst,
+                        "kind": str(edge.get("kind", "fallthrough")),
+                    }
+                )
+    return edges
+
+
 def touched_files_from_patch(patch_text: str) -> List[str]:
     files: Set[str] = set()
     for line in patch_text.splitlines():
@@ -353,6 +376,9 @@ def compute_cfg_diff_for_patch(
                 cfg_after = build_cfg_for_files(touched, base_path=str(patched_repo))
                 cfg_diff = diff_cfg(cfg_before, cfg_after)
                 candidates = get_diff_candidate_nodes(cfg_diff)
+                candidate_edges = get_candidate_code_edges(cfg_after, candidates)
+                cfg_diff["candidate_edges"] = candidate_edges
+                diagnostics["candidate_code_edges"] = candidate_edges
                 return cfg_diff, candidates, diagnostics
             diagnostics["fallback_reason"] = f"patch_apply_failed: {apply_msg}"
         except Exception as exc:
@@ -384,10 +410,12 @@ def compute_cfg_diff_for_patch(
         "nodes_changed": [],
         "edges_added": [],
         "edges_removed": [],
+        "candidate_edges": [],
         "summary": {
             "files_compared": len(touched),
             "functions_compared": 0,
         },
         "candidate_nodes": candidates,
     }
+    diagnostics["candidate_code_edges"] = []
     return cfg_diff, candidates, diagnostics

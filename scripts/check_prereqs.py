@@ -112,14 +112,11 @@ def main() -> int:
     _print_rows("dataset", dataset_rows)
 
     # Structural defense model bundle.
-    model_dir = root / "data" / "models" / "structural_misalignment" / "structural_combined"
+    model_dir = root / "data" / "models" / "structural_misalignment" / "hetero_gnn"
     model_rows: List[Tuple[str, bool, str]] = []
     required_model_files = [
-        model_dir / "model.joblib",
-        model_dir / "imputer.joblib",
-        model_dir / "scaler.joblib",
+        model_dir / "model.pt",
         model_dir / "metadata.json",
-        model_dir / "tfidf_vectorizer.pkl",
     ]
     model_rows.append(
         (

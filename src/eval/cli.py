@@ -65,8 +65,8 @@ def parse_args(argv: Optional[List[str]] = None):
     attack.add_argument("--out", required=True)
     attack.add_argument("--config-dir", default="configs")
 
-    defense = sub.add_parser("run_defense", help="Run defense phase only (evaluate defense on pre-generated attack results).")
-    defense.add_argument("--attack-results", required=True, help="Path to attack_results.jsonl from run_attack")
+    defense = sub.add_parser("run_defense", help="Run defense phase only (evaluate defense on finalized attack datasets).")
+    defense.add_argument("--attack-results", required=True, help="Path to finalized attack_dataset.jsonl from run_attack")
     defense.add_argument("--baseline", required=True)
     defense.add_argument("--fidelity-mode", default="llm", choices=["llm", "surrogate_debug"])
     defense.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids (filter to test set)")
@@ -74,6 +74,11 @@ def parse_args(argv: Optional[List[str]] = None):
     defense.add_argument("--out", required=True)
     defense.add_argument("--config-dir", default="configs")
     defense.add_argument("--run-judges", action="store_true")
+    defense.add_argument("--repo-reset-each-instance", action="store_true", default=True)
+    defense.add_argument("--no-repo-reset-each-instance", dest="repo_reset_each_instance", action="store_false")
+    defense.add_argument("--max-patch-attempts", type=int, default=2)
+    defense.add_argument("--retry-on-apply-failure", action="store_true", default=True)
+    defense.add_argument("--no-retry-on-apply-failure", dest="retry_on_apply_failure", action="store_false")
 
     sub.add_parser("list_baselines", help="List registered defense/baseline plugins.")
 
@@ -145,6 +150,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             instance_ids=instance_ids,
             limit=args.limit,
             run_judges=bool(args.run_judges),
+            repo_reset_each_instance=bool(args.repo_reset_each_instance),
+            max_patch_attempts=int(args.max_patch_attempts),
+            retry_on_apply_failure=bool(args.retry_on_apply_failure),
         )
         return 0
 
