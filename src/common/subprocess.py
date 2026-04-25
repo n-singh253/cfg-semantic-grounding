@@ -31,23 +31,33 @@ def run_command(
     if env is not None:
         merged_env = os.environ.copy()
         merged_env.update(env)
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd) if cwd else None,
-        env=merged_env,
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec,
-        check=False,
-    )
-    runtime = time.time() - start
-    return CommandResult(
-        command=command,
-        returncode=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
-        runtime_sec=runtime,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd else None,
+            env=merged_env,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            check=False,
+        )
+        runtime = time.time() - start
+        return CommandResult(
+            command=command,
+            returncode=completed.returncode,
+            stdout=completed.stdout,
+            stderr=completed.stderr,
+            runtime_sec=runtime,
+        )
+    except subprocess.TimeoutExpired as exc:
+        runtime = time.time() - start
+        return CommandResult(
+            command=command,
+            returncode=124,
+            stdout=exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or ""),
+            stderr=exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or ""),
+            runtime_sec=runtime,
+        )
 
 
 def command_exists(name: str) -> bool:

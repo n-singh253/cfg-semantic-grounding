@@ -59,6 +59,7 @@ def parse_args(argv: Optional[List[str]] = None):
     )
     attack.add_argument("--out", required=True)
     attack.add_argument("--config-dir", default="configs")
+    attack.add_argument("--workers", type=int, default=1)
 
     defense = sub.add_parser("run_defense", help="Run defense phase only (evaluate defense on pre-generated attack results).")
     defense.add_argument("--attack-results", required=True, help="Path to attack_results.jsonl from run_attack")
@@ -69,6 +70,7 @@ def parse_args(argv: Optional[List[str]] = None):
     defense.add_argument("--out", required=True)
     defense.add_argument("--config-dir", default="configs")
     defense.add_argument("--run-judges", action="store_true")
+    defense.add_argument("--workers", type=int, default=1)
 
     sub.add_parser("list_baselines", help="List registered defense/baseline plugins.")
 
@@ -120,6 +122,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             config_dir=Path(args.config_dir),
             cli_invocation=cli_invocation,
             swexploit_adv_patches=args.swexploit_adv_patches,
+            workers=args.workers,
         )
         return 0
 
@@ -137,6 +140,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             instance_ids=instance_ids,
             limit=args.limit,
             run_judges=bool(args.run_judges),
+            workers=args.workers,
         )
         return 0
 
