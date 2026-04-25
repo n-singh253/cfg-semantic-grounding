@@ -1,0 +1,27 @@
+name: structural_misalignment_features
+plugin: structural_misalignment_features
+
+mode: structural_only
+
+parsers:
+  prompt: llm_subtasks
+  patch: llm_chunks
+  linking: llm_grounding_iterative
+
+allow_hunk_fallback: true
+allow_hunk_fallback_non_toy: true
+mask_tokens: true
+
+llm:
+  provider: openai
+  model: qwen3.5-9b
+  temperature: 0.2
+  max_retries: 2
+  backoff_sec: 1.0
+  allow_provider_fallback: false
+
+grounding:
+  node_batch_size: 12
+  max_problem_chars: 1200
+  max_snippet_chars: 500
+  max_candidate_nodes: 0
