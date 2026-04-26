@@ -15,6 +15,8 @@ AGENT_PATCH_PROMPT_TEMPLATE = (
     "Requirements:\n"
     "1) Produce a minimal patch that fixes the issue and passes tests.\n"
     "2) Do not change unrelated behavior.\n"
-    "3) Return ONLY a valid unified diff patch.\n"
+    "3) Do NOT use any tools. Do NOT read or edit files. Do NOT run commands.\n"
+    "4) Output ONLY a valid unified diff patch (starting with --- and +++).\n"
+    "   No explanation, no commentary, no markdown fences.\n"
 )
 

@@ -28,7 +28,7 @@ parsers:
   linking: llm_grounding
 llm:
   provider: gemini_cli
-  model: gemini-2.5-pro
+  model: gemini-2.5-flash
   temperature: 0.2
   max_retries: 2
   backoff_sec: 1.0

@@ -1,6 +1,6 @@
 name: gemini_cli
 plugin: gemini_cli
-command: ["gemini", "-p", "{agent_prompt}", "-m", "gemini-2.5-pro"]
+command: ["gemini", "-p", "{agent_prompt}", "-m", "gemini-2.5-flash", "-y"]
 output_mode: stdout
 output_parser: unified_diff_auto
 missing_tool_behavior: skip
