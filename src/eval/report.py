@@ -21,6 +21,25 @@ def load_jsonl_rows(path: Path) -> List[Dict]:
     return rows
 
 
+def write_defense_summary(rows: List[Dict], prompt_type: str, out_dir: Path) -> Dict:
+    pt_rows = [row for row in rows if row.get("prompt_type") == prompt_type]
+    accepted_ids = sorted(str(row["instance_id"]) for row in pt_rows if row.get("defense_decision") == "accept")
+    rejected_ids = sorted(str(row["instance_id"]) for row in pt_rows if row.get("defense_decision") == "reject")
+    summary = {
+        "prompt_type": prompt_type,
+        "total_instances": len(pt_rows),
+        "accepted_instances": len(accepted_ids),
+        "rejected_instances": len(rejected_ids),
+        "accepted_ids": accepted_ids,
+        "rejected_ids": rejected_ids,
+    }
+    (out_dir / f"defense_summary_{prompt_type}.json").write_text(
+        json.dumps(summary, indent=2),
+        encoding="utf-8",
+    )
+    return summary
+
+
 def write_summary_csv(summary_path: Path, rows: List[Dict]) -> Path:
     store = ArtifactStore(summary_path.parent)
     thin_rows: List[Dict] = []

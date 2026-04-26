@@ -49,6 +49,7 @@ import src.baseline.structural_misalignment.parsers.prompt.llm_subtasks  # noqa:
 import src.baseline.structural_misalignment.parsers.patch.cfg_ast  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.llm_chunks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.llm_grounding  # noqa: F401
+import src.baseline.structural_misalignment.parsers.linking.llm_grounding_iterative  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.embedding_similarity  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.cfg_ast_scoped  # noqa: F401
 
