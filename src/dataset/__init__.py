@@ -1,3 +1,3 @@
 """Dataset plugin package."""
 
-from src.dataset import swebench, toy  # noqa: F401
+from src.dataset import featurebench, polybench, swebench, toy  # noqa: F401
