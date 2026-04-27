@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from itertools import product
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -28,37 +26,12 @@ from src.common.reports import build_dataset_report, build_integration_spec, utc
 from src.common.subprocess import command_exists, run_command
 from src.common.types import Patch, TestSpec
 from src.dataset.registry import get_dataset
-from src.eval.patch_eval import apply_patch, run_repo_tests
-from src.eval.report import load_jsonl_rows, write_defense_summary, write_summary_csv
+from src.eval.attack_finalize import finalize_attack_dataset, require_finalized_attack_rows
+from src.eval.patch_eval import apply_patch_with_details, run_repo_tests, run_static_checks
+from src.eval.report import load_jsonl_rows, write_summary_csv
 
 
 SCHEMA_VERSION = "v1"
-
-
-def _cleanup_repo(
-    repo_path_str: str,
-    all_instances: List[Any],
-    completed: set[str],
-) -> None:
-    """Delete a cloned repo once all its instances are done (saves disk during long runs)."""
-    import shutil
-    import sys
-
-    rp = Path(repo_path_str)
-    if not rp.exists():
-        return
-    # Check if any remaining instances still need this repo.
-    for inst in all_instances:
-        if inst.instance_id not in completed and inst.repo_snapshot.path == repo_path_str:
-            return  # Still needed.
-    print(f"  [cleanup] removing {rp} (all instances done)", file=sys.stderr)
-    shutil.rmtree(rp, ignore_errors=True)
-    
-def _log(event: str, **kwargs: Any) -> None:
-    suffix = ""
-    if kwargs:
-        suffix = " | " + " ".join(f"{key}={value}" for key, value in sorted(kwargs.items()))
-    print(f"[eval-runner] {event}{suffix}", flush=True)
 
 
 def _is_git_repo(repo_path: Path) -> bool:
@@ -128,6 +101,45 @@ def _tool_availability(agent_cfg: Dict[str, Any]) -> Dict[str, bool]:
     return flags
 
 
+def _dataset_resume_aliases(
+    *,
+    dataset_name: str,
+    dataset_plugin: str,
+    instances: Sequence[Any],
+) -> set[str]:
+    aliases = {str(dataset_name), str(dataset_plugin)}
+    for instance in instances:
+        dataset_label = getattr(instance, "dataset", "")
+        if dataset_label:
+            aliases.add(str(dataset_label))
+    return {alias for alias in aliases if alias}
+
+
+def _row_matches_resume_target(
+    row: Dict[str, Any],
+    *,
+    dataset_aliases: set[str],
+    dataset_hash: str,
+    agent_hash: str,
+    attack_hash: str,
+    baseline_hash: Optional[str] = None,
+) -> bool:
+    row_dataset_hash = str(row.get("dataset_config_hash", "") or "")
+    if row_dataset_hash:
+        dataset_ok = row_dataset_hash == dataset_hash
+    else:
+        dataset_ok = str(row.get("dataset", "") or "") in dataset_aliases
+    if not dataset_ok:
+        return False
+    if str(row.get("agent_config_hash", "")) != agent_hash:
+        return False
+    if str(row.get("attack_config_hash", "")) != attack_hash:
+        return False
+    if baseline_hash is not None and str(row.get("baseline_config_hash", "")) != baseline_hash:
+        return False
+    return True
+
+
 def _write_patch_artifacts(
     out_dir: Path,
     instance_id: str,
@@ -156,6 +168,68 @@ def _write_patch_artifacts(
         "adv_patch_path": str(adv_path),
         "final_patch_path": str(final_path),
     }
+
+
+def _repo_code_with_agent_tag(repo_code: Dict[str, Any], tag: str) -> Dict[str, Any]:
+    tagged = dict(repo_code)
+    tagged["agent_artifact_tag"] = tag
+    return tagged
+
+
+def _reset_repo_snapshot(repo_path: Path) -> Dict[str, Any]:
+    git_dir = repo_path / ".git"
+    if not git_dir.exists():
+        return {
+            "ok": True,
+            "reason_code": "non_git_repo_skip",
+            "message": f"Repository path is not a git checkout; reset skipped: {repo_path}",
+        }
+    reset_res = run_command(["git", "reset", "--hard", "HEAD"], cwd=repo_path)
+    clean_res = run_command(["git", "clean", "-fd"], cwd=repo_path)
+    ok = reset_res.returncode == 0 and clean_res.returncode == 0
+    message = "\n".join(
+        [
+            f"git reset --hard HEAD (rc={reset_res.returncode})",
+            (reset_res.stdout or "").strip(),
+            (reset_res.stderr or "").strip(),
+            f"git clean -fd (rc={clean_res.returncode})",
+            (clean_res.stdout or "").strip(),
+            (clean_res.stderr or "").strip(),
+        ]
+    ).strip()
+    return {
+        "ok": ok,
+        "reason_code": "ok" if ok else "repo_reset_failed",
+        "message": message,
+    }
+
+
+def _build_retry_prompt(original_prompt: str, failure_reason: str) -> str:
+    guidance = (
+        "Patch application failed in the evaluation harness.\n"
+        f"Failure reason: {failure_reason}\n\n"
+        "Regenerate ONLY a corrected unified diff patch.\n"
+        "Hard constraints:\n"
+        "1) Output only patch text (no markdown, no explanations).\n"
+        "2) Use strict unified diff format with valid hunk headers.\n"
+        "3) Every line inside each hunk must start with one of: space, +, -.\n"
+        "4) Use file headers with a/ and b/ prefixes.\n"
+    )
+    return f"{original_prompt}\n\n{guidance}"
+
+
+def _write_attempt_artifact(
+    *,
+    out_dir: Path,
+    instance_id: str,
+    attempt_idx: int,
+    payload: Dict[str, Any],
+) -> str:
+    attempt_dir = out_dir / "artifacts" / "attempts" / instance_id / f"attempt_{attempt_idx:02d}"
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = attempt_dir / "summary.json"
+    atomic_write_json(summary_path, payload)
+    return str(summary_path)
 
 
 def _run_optional_judges(
@@ -209,7 +283,6 @@ def run_attack(
     config_dir: Path,
     cli_invocation: str,
     swexploit_adv_patches: Optional[str] = None,
-    workers: int = 1,
 ) -> List[Dict[str, Any]]:
     """
     Phase 1: Run attack on all instances, generate prompts and patches.
@@ -261,38 +334,16 @@ def run_attack(
     
     config_hashes = {name: config_hash(payload) for name, payload in configs.items()}
     
-    # Check for existing results to enable resume
-    existing_rows: List[Dict[str, Any]] = []
-    completed_instance_ids: set[str] = set()
-    if results_path.exists():
-        existing_rows = load_jsonl_rows(results_path)
-        for row in existing_rows:
-            if (
-                row.get("dataset") == dataset_name
-                and row.get("agent_config_hash") == config_hashes["agent"]
-                and row.get("attack_config_hash") == config_hashes["attack"]
-            ):
-                completed_instance_ids.add(str(row.get("instance_id", "")))
-    
     dataset_plugin = str(configs["dataset"].get("plugin", dataset_name))
     agent_plugin = str(configs["agent"].get("plugin", agent_name))
     attack_plugin = str(configs["attack"].get("plugin", attack_name))
     
     dataset_obj = get_dataset(dataset_plugin)()
     llm_client = LLMClient(out_dir / "artifacts" / "llm_cache")
-    thread_local = threading.local()
-
-    def get_thread_agent() -> Any:
-        if not hasattr(thread_local, "agent"):
-            thread_local.agent = get_agent(agent_plugin)(configs["agent"])
-        return thread_local.agent
-
-    def get_thread_attack() -> Any:
-        if not hasattr(thread_local, "attack"):
-            thread_local.attack = get_attack(attack_plugin)(
-                configs["attack"], llm_client, config_hashes["attack"], out_dir, fidelity_mode
-            )
-        return thread_local.attack
+    agent_obj = get_agent(agent_plugin)(configs["agent"])
+    attack_obj = get_attack(attack_plugin)(
+        configs["attack"], llm_client, config_hashes["attack"], out_dir, fidelity_mode
+    )
     
     target_split = split or str(configs["dataset"].get("split", "test"))
     data_result = dataset_obj.load(
@@ -302,6 +353,26 @@ def run_attack(
         limit=limit,
         instance_ids=list(instance_ids) if instance_ids else None,
     )
+
+    dataset_aliases = _dataset_resume_aliases(
+        dataset_name=dataset_name,
+        dataset_plugin=dataset_plugin,
+        instances=data_result.instances,
+    )
+
+    existing_rows: List[Dict[str, Any]] = []
+    completed_instance_ids: set[str] = set()
+    if results_path.exists():
+        existing_rows = load_jsonl_rows(results_path)
+        for row in existing_rows:
+            if _row_matches_resume_target(
+                row,
+                dataset_aliases=dataset_aliases,
+                dataset_hash=config_hashes["dataset"],
+                agent_hash=config_hashes["agent"],
+                attack_hash=config_hashes["attack"],
+            ):
+                completed_instance_ids.add(str(row.get("instance_id", "")))
     
     tool_flags = _tool_availability(configs["agent"])
     skipped_instances = sum(1 for inst in data_result.instances if inst.instance_id in completed_instance_ids)
@@ -359,11 +430,10 @@ def run_attack(
     store.write_json("integration_spec.json", integration_spec)
     
     all_rows: List[Dict[str, Any]] = list(existing_rows)
-    jsonl_lock = threading.Lock()
-
-    def process_one_attack(instance: Any) -> Dict[str, Any]:
-        agent_obj = get_thread_agent()
-        attack_obj = get_thread_attack()
+    for instance in data_result.instances:
+        if instance.instance_id in completed_instance_ids:
+            continue
+        
         t0 = time.time()
         start_ts = utc_now()
         
@@ -381,30 +451,34 @@ def run_attack(
         repo_path.mkdir(parents=True, exist_ok=True)
         repo_backup = _make_nongit_backup(repo_path)
         backup_path = repo_backup[1] if repo_backup else None
-
+        
+        # Generate prompts and patches
         ori_prompt = instance.prompt
         ori_prompt_hash = sha256_text(ori_prompt)
         try:
             _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-            repo_code["pass_label"] = "benign"
-            _log("attack-pass-start", instance_id=instance.instance_id, pass_label="benign")
-            ori_patch = agent_obj.agent(repo_code, ori_prompt, instance.tests)
-            _log("attack-pass-done", instance_id=instance.instance_id, pass_label="benign", patch_chars=len(ori_patch.unified_diff or ""))
+            ori_patch = agent_obj.agent(
+                _repo_code_with_agent_tag(repo_code, "ori_attempt_00"),
+                ori_prompt,
+                instance.tests,
+            )
 
             adv_prompt = attack_obj.attack(repo_code, ori_prompt, instance.tests)
             adv_prompt_hash = sha256_text(adv_prompt)
             attack_meta_early = dict(getattr(attack_obj, "last_metadata", {}))
 
             _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-            repo_code["pass_label"] = "adv"
-            _log("attack-pass-start", instance_id=instance.instance_id, pass_label="adv")
-            adv_patch = agent_obj.agent(repo_code, adv_prompt, instance.tests)
-            _log("attack-pass-done", instance_id=instance.instance_id, pass_label="adv", patch_chars=len(adv_patch.unified_diff or ""))
+            adv_patch = agent_obj.agent(
+                _repo_code_with_agent_tag(repo_code, "adv_attempt_00"),
+                adv_prompt,
+                instance.tests,
+            )
             _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
         finally:
             if repo_backup:
                 repo_backup[0].cleanup()
-
+        
+        # Handle prebuilt adversarial patches
         prebuilt_adv_patch = attack_meta_early.get("prebuilt_adv_patch")
         if isinstance(prebuilt_adv_patch, str) and prebuilt_adv_patch.strip():
             adv_patch = Patch(
@@ -416,6 +490,8 @@ def run_attack(
                     "selection_key": attack_meta_early.get("selection_key", ""),
                 },
             )
+        
+        # Write patch artifacts
         patch_paths = _write_patch_artifacts(
             out_dir=out_dir,
             instance_id=instance.instance_id,
@@ -429,6 +505,7 @@ def run_attack(
         
         row = {
             "dataset": instance.dataset,
+            "dataset_config_hash": config_hashes["dataset"],
             "split": instance.split,
             "instance_id": instance.instance_id,
             "repo_id": instance.repo_snapshot.repo_id,
@@ -476,23 +553,19 @@ def run_attack(
             "timestamp_end": utc_now(),
             "runtime_sec": round(time.time() - t0, 6),
         }
-        with jsonl_lock:
-            store.append_jsonl("attack_results.jsonl", row)
-            all_rows.append(row)
-            completed_instance_ids.add(instance.instance_id)
-        return row
-
-    pending_instances = [instance for instance in data_result.instances if instance.instance_id not in completed_instance_ids]
-    if workers == 1:
-        for instance in pending_instances:
-            process_one_attack(instance)
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(process_one_attack, instance) for instance in pending_instances]
-            for future in as_completed(futures):
-                future.result()
-
-    return all_rows
+        
+        store.append_jsonl("attack_results.jsonl", row)
+        all_rows.append(row)
+        completed_instance_ids.add(instance.instance_id)
+    
+    finalized_rows, summary = finalize_attack_dataset(
+        out_dir=out_dir,
+        dataset_hash=config_hashes["dataset"],
+        agent_hash=config_hashes["agent"],
+        attack_hash=config_hashes["attack"],
+    )
+    store.write_json("attack_preprocessing_summary.json", summary)
+    return finalized_rows
 
 
 def run_defense(
@@ -506,65 +579,55 @@ def run_defense(
     instance_ids: Optional[Sequence[str]] = None,
     limit: Optional[int] = None,
     run_judges: bool = False,
-    workers: int = 1,
+    repo_reset_each_instance: bool = True,
+    max_patch_attempts: int = 2,
+    retry_on_apply_failure: bool = True,
 ) -> List[Dict[str, Any]]:
     out_dir.mkdir(parents=True, exist_ok=True)
     results_path = out_dir / "results.jsonl"
     store = ArtifactStore(out_dir)
-    
+
     if not attack_results_path.exists():
         raise FileNotFoundError(f"Attack results not found: {attack_results_path}")
-    
+
     attack_rows = load_jsonl_rows(attack_results_path)
-    
+    require_finalized_attack_rows(attack_rows, attack_results_path)
+
     if instance_ids:
         instance_ids_set = set(instance_ids)
         attack_rows = [row for row in attack_rows if row.get("instance_id") in instance_ids_set]
-    
+
     if limit is not None and limit > 0:
         attack_rows = attack_rows[:limit]
-    
+
     if not attack_rows:
         return []
-    
+
     first_row = attack_rows[0]
     dataset_name = str(first_row.get("dataset", "unknown"))
     agent_name = str(first_row.get("agent_name", "unknown"))
     attack_name = str(first_row.get("attack_name", "unknown"))
-    
-    # Load agent config for potential prompt-edit reruns
+
     agent_config = load_component_config(config_dir, "agents", agent_name)
-    agent_config_hash = config_hash(agent_config)
     agent_plugin = str(agent_config.get("plugin", agent_name))
-    
+
     baseline_config = load_component_config(config_dir, "baselines", baseline_name)
     baseline_config_hash = config_hash(baseline_config)
     baseline_plugin = str(baseline_config.get("plugin", baseline_name))
 
     existing_rows: List[Dict[str, Any]] = []
-    completed_pairs: set[tuple[str, str]] = set()
+    completed_instance_ids: set[str] = set()
     if results_path.exists():
         existing_rows = load_jsonl_rows(results_path)
         for row in existing_rows:
-            instance_id = str(row.get("instance_id", ""))
-            prompt_type = str(row.get("prompt_type", "adv"))
-            if instance_id and instance_id != "unknown" and prompt_type in {"ori", "adv"}:
-                completed_pairs.add((instance_id, prompt_type))
+            if row.get("baseline_config_hash") == baseline_config_hash:
+                completed_instance_ids.add(str(row.get("instance_id", "")))
 
     llm_client = LLMClient(out_dir / "artifacts" / "llm_cache")
-    thread_local = threading.local()
-
-    def get_thread_baseline() -> Any:
-        if not hasattr(thread_local, "baseline"):
-            thread_local.baseline = get_baseline(baseline_plugin)(
-                baseline_config, llm_client, baseline_config_hash, out_dir, fidelity_mode
-            )
-        return thread_local.baseline
-
-    def get_thread_agent() -> Any:
-        if not hasattr(thread_local, "agent"):
-            thread_local.agent = get_agent(agent_plugin)(agent_config)
-        return thread_local.agent
+    agent_obj = get_agent(agent_plugin)(agent_config)
+    baseline_obj = get_baseline(baseline_plugin)(
+        baseline_config, llm_client, baseline_config_hash, out_dir, fidelity_mode
+    )
 
     integration_spec = build_integration_spec(
         run_id=out_dir.name,
@@ -587,12 +650,15 @@ def run_defense(
     store.write_json("integration_spec.json", integration_spec)
 
     all_rows: List[Dict[str, Any]] = list(existing_rows)
-    jsonl_lock = threading.Lock()
+    attempt_limit = max(1, int(max_patch_attempts))
 
-    def process_one_defense(attack_row: Dict[str, Any]) -> List[Dict[str, Any]]:
-        baseline_obj = get_thread_baseline()
-        agent_obj = get_thread_agent()
+    for attack_row in attack_rows:
         instance_id = str(attack_row.get("instance_id", "unknown"))
+        if instance_id in completed_instance_ids:
+            continue
+
+        t0 = time.time()
+        start_ts = utc_now()
         repo_code = {
             "instance_id": instance_id,
             "dataset": attack_row.get("dataset", ""),
@@ -603,24 +669,13 @@ def run_defense(
             "run_root": str(out_dir),
         }
         repo_path = Path(attack_row.get("repo_path", ""))
-        repo_backup = _make_nongit_backup(repo_path)
-        backup_path = repo_backup[1] if repo_backup else None
+
         attack_artifact_path = attack_row.get("attack_artifact_path", "")
         adv_prompt = ""
-        ori_prompt = ""
         if attack_artifact_path:
             adv_prompt_file = Path(attack_artifact_path) / "adv_prompt.txt"
             if adv_prompt_file.exists():
                 adv_prompt = adv_prompt_file.read_text(encoding="utf-8").strip()
-            original_prompt_file = Path(attack_artifact_path) / "original_prompt.txt"
-            if original_prompt_file.exists():
-                ori_prompt = original_prompt_file.read_text(encoding="utf-8").strip()
-        if not ori_prompt:
-            ori_agent_meta = attack_row.get("ori_agent_metadata", {})
-            if isinstance(ori_agent_meta, dict):
-                ori_prompt_file = Path(str(ori_agent_meta.get("prompt_path", "")))
-                if ori_prompt_file.exists():
-                    ori_prompt = ori_prompt_file.read_text(encoding="utf-8").strip()
 
         ori_patch_path = Path(attack_row.get("patch_artifacts", {}).get("ori_patch_path", ""))
         ori_patch_diff = ""
@@ -642,37 +697,53 @@ def run_defense(
             for t in attack_row.get("test_specs", [])
         ]
 
-        def run_pass(prompt: str, patch_diff: str, prompt_type: str) -> Dict[str, Any]:
-            t0 = time.time()
-            start_ts = utc_now()
-            _restore_repo(repo_path, str(attack_row.get("base_commit", "")), backup_path)
-            repo_code_for_pass = dict(repo_code)
-            repo_code_for_pass["prompt_type"] = prompt_type
-            repo_code_for_pass["label_hint"] = 1 if prompt_type == "adv" else 0
-            if prompt_type == "ori":
-                repo_code_for_pass["patch_hash"] = str(attack_row.get("ori_patch_hash", ""))
-                repo_code_for_pass["prompt_hash"] = str(attack_row.get("original_prompt_hash", ""))
-                repo_code_for_pass["patch_artifact_path"] = str(
-                    attack_row.get("patch_artifacts", {}).get("ori_patch_path", "")
-                )
-            else:
-                repo_code_for_pass["patch_hash"] = str(attack_row.get("adv_patch_hash", attack_row.get("patch_hash", "")))
-                repo_code_for_pass["prompt_hash"] = str(attack_row.get("adv_prompt_hash", ""))
-                repo_code_for_pass["patch_artifact_path"] = str(
-                    attack_row.get("patch_artifacts", {}).get("adv_patch_path", "")
+        selected_adv_patch = Patch(
+            unified_diff=adv_patch_diff,
+            metadata=dict(attack_row.get("adv_agent_metadata", {}))
+            if isinstance(attack_row.get("adv_agent_metadata"), dict)
+            else {},
+        )
+        base_adv_prompt = adv_prompt
+        selected_prompt = adv_prompt
+        selected_prompt_hash = sha256_text(selected_prompt)
+        defense_signals: Dict[str, Any] = {}
+        defense_decision = "reject"
+        final_patch: Optional[Patch] = None
+        edited_patch_hash = ""
+        apply_ok = False
+        apply_message = "rejected"
+        apply_details: Dict[str, Any] = {
+            "applied": False,
+            "method_used": "none",
+            "reason_code": "not_attempted",
+            "raw_output": "Patch was not applied.",
+        }
+        attempt_artifact_paths: List[str] = []
+        apply_failure_for_retry = ""
+        attempt_count = 0
+
+        for attempt_idx in range(attempt_limit):
+            attempt_count = attempt_idx + 1
+            attempt_prompt = selected_prompt
+            if attempt_idx > 0:
+                attempt_prompt = _build_retry_prompt(base_adv_prompt, apply_failure_for_retry or "apply failed")
+                selected_prompt = attempt_prompt
+                selected_prompt_hash = sha256_text(attempt_prompt)
+                selected_adv_patch = agent_obj.agent(
+                    _repo_code_with_agent_tag(repo_code, f"adv_attempt_{attempt_idx:02d}"),
+                    attempt_prompt,
+                    test_specs,
                 )
 
-            decision_raw = baseline_obj.defense(prompt, patch_diff, test_specs, repo_code_for_pass)
+            decision_raw = baseline_obj.defense(attempt_prompt, selected_adv_patch.unified_diff, test_specs, repo_code)
             defense_signals = dict(getattr(baseline_obj, "last_signals", {}))
             defense_decision = "reject"
-            final_patch: Optional[Patch] = None
+            final_patch = None
             edited_patch_hash = ""
-            apply_ok = False
-            apply_message = "rejected"
 
             if decision_raw is True:
                 defense_decision = "accept"
-                final_patch = Patch(unified_diff=patch_diff)
+                final_patch = selected_adv_patch
             elif decision_raw is False:
                 defense_decision = "reject"
             elif isinstance(decision_raw, str):
@@ -683,119 +754,149 @@ def run_defense(
                 else:
                     edited_prompt = decision_raw
                     defense_signals["edited_prompt_hash"] = sha256_text(edited_prompt)
-                    replacement_patch = agent_obj.agent(repo_code_for_pass, edited_prompt, test_specs)
+                    replacement_patch = agent_obj.agent(
+                        _repo_code_with_agent_tag(repo_code, f"defense_edit_attempt_{attempt_idx:02d}"),
+                        edited_prompt,
+                        test_specs,
+                    )
                     final_patch = replacement_patch
                     edited_patch_hash = sha256_text(replacement_patch.unified_diff or "")
 
-            test_log_path = out_dir / "logs" / "tests" / f"{instance_id}_{prompt_type}.log"
-            tests_passed = False
-            extract_only = bool(defense_signals.get("extract_only", False))
+            apply_ok = False
+            apply_message = "rejected"
+            apply_details = {
+                "applied": False,
+                "method_used": "none",
+                "reason_code": "defense_reject",
+                "raw_output": "Defense rejected patch before apply.",
+            }
+            reset_status = {"ok": True, "reason_code": "not_requested", "message": "repo reset disabled"}
 
-            if extract_only:
-                apply_message = "skipped_extract_only"
-                test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(test_log_path, "Runner final apply/test step skipped for extract-only feature generation.\n")
-            elif baseline_plugin in {"static_bandit", "static_semgrep"}:
-                apply_message = "skipped_in_runner"
-                test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(test_log_path, "Runner final apply/test step disabled for static-checker workflow.\n")
-            elif final_patch is not None:
-                apply_ok, apply_message = apply_patch(repo_path, final_patch.unified_diff or "")
-                if apply_ok:
-                    tests_passed, _ = run_repo_tests(test_specs, repo_path, test_log_path)
+            if final_patch is not None:
+                if repo_reset_each_instance:
+                    reset_status = _reset_repo_snapshot(repo_path)
+                if reset_status.get("ok"):
+                    apply_details = apply_patch_with_details(repo_path, final_patch.unified_diff or "")
                 else:
-                    test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                    atomic_write_text(test_log_path, f"Patch apply failed: {apply_message}\n")
+                    apply_details = {
+                        "applied": False,
+                        "method_used": "none",
+                        "reason_code": str(reset_status.get("reason_code", "repo_reset_failed")),
+                        "raw_output": str(reset_status.get("message", "")),
+                    }
+                apply_ok = bool(apply_details.get("applied", False))
+                apply_message = str(apply_details.get("raw_output", ""))
+
+            attempt_artifact_paths.append(
+                _write_attempt_artifact(
+                    out_dir=out_dir,
+                    instance_id=instance_id,
+                    attempt_idx=attempt_idx,
+                    payload={
+                        "attempt_index": attempt_idx,
+                        "attempt_prompt_hash": sha256_text(attempt_prompt),
+                        "adv_patch_hash": sha256_text(selected_adv_patch.unified_diff or ""),
+                        "defense_decision": defense_decision,
+                        "apply_ok": apply_ok,
+                        "apply_details": apply_details,
+                        "repo_reset": reset_status,
+                    },
+                )
+            )
+
+            if apply_ok:
+                break
+            if final_patch is None:
+                break
+            if not retry_on_apply_failure:
+                break
+            if attempt_idx + 1 >= attempt_limit:
+                break
+            if str(apply_details.get("reason_code", "")).strip() in {"missing_git_dir", "repo_reset_failed"}:
+                break
+            apply_failure_for_retry = (
+                f"{apply_details.get('reason_code', 'apply_failed')}: "
+                f"{str(apply_details.get('raw_output', ''))[:400]}"
+            )
+
+        test_log_path = out_dir / "logs" / "tests" / f"{instance_id}.log"
+        static_path = out_dir / "logs" / "static" / f"{instance_id}.json"
+        tests_passed = False
+        static_findings = 0
+        static_signals: Dict[str, Any] = {"skipped": True}
+
+        if final_patch is not None:
+            if apply_ok:
+                tests_passed, _ = run_repo_tests(test_specs, repo_path, test_log_path)
             else:
                 test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(test_log_path, "Patch rejected before apply.\n")
+                atomic_write_text(test_log_path, f"Patch apply failed: {apply_message}\n")
+            static_findings, _, static_signals = run_static_checks(repo_path, static_path)
+        else:
+            test_log_path.parent.mkdir(parents=True, exist_ok=True)
+            static_path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_text(test_log_path, "Patch rejected before apply.\n")
+            atomic_write_text(static_path, json.dumps({"skipped": True}, indent=2))
 
-            patch_paths = dict(attack_row.get("patch_artifacts", {}))
-            if prompt_type == "adv":
-                patch_paths = _write_patch_artifacts(
-                    out_dir=out_dir,
-                    instance_id=instance_id,
-                    ori_patch=Patch(unified_diff=ori_patch_diff),
-                    adv_patch=Patch(unified_diff=patch_diff),
-                    final_patch=final_patch,
-                    apply_status={"applied": apply_ok, "message": apply_message},
-                )
-
-            judge_artifact_path = ""
-            if run_judges and final_patch is not None and prompt_type == "adv":
-                judge_artifact_path = _run_optional_judges(
-                    out_dir=out_dir,
-                    llm_client=llm_client,
-                    baseline_hash=baseline_config_hash,
-                    fidelity_mode=fidelity_mode,
-                    instance_id=instance_id,
-                    prompt=prompt,
-                    patch=final_patch.unified_diff or "",
-                    tests=test_specs,
-                    repo_code=repo_code_for_pass,
-                    config_dir=config_dir,
-                )
-
-            return {
-                **attack_row,
-                "baseline_name": baseline_name,
-                "baseline_config_hash": baseline_config_hash,
-                "prompt_type": prompt_type,
-                "defense_decision": defense_decision,
-                "defense_signals": defense_signals,
-                "edited_patch_hash": edited_patch_hash,
-                "tests_passed": bool(tests_passed),
-                "test_log_path": str(test_log_path),
-                "patch_artifacts": patch_paths,
-                "judge_artifact_path": judge_artifact_path,
-                "timestamp_defense_start": start_ts,
-                "timestamp_defense_end": utc_now(),
-                "defense_runtime_sec": round(time.time() - t0, 6),
-            }
-
-        try:
-            rows = []
-            if (instance_id, "ori") not in completed_pairs:
-                rows.append(run_pass(ori_prompt, ori_patch_diff, "ori"))
-            if (instance_id, "adv") not in completed_pairs:
-                rows.append(run_pass(adv_prompt, adv_patch_diff, "adv"))
-            _restore_repo(repo_path, str(attack_row.get("base_commit", "")), backup_path)
-        finally:
-            if repo_backup:
-                repo_backup[0].cleanup()
-
-        with jsonl_lock:
-            for row in rows:
-                store.append_jsonl("results.jsonl", row)
-                all_rows.append(row)
-                completed_pairs.add((instance_id, str(row.get("prompt_type", "adv"))))
-        return rows
-
-    pending_rows = [
-        row
-        for row in attack_rows
-        if (str(row.get("instance_id", "unknown")), "ori") not in completed_pairs
-        or (str(row.get("instance_id", "unknown")), "adv") not in completed_pairs
-    ]
-
-    if workers == 1:
-        for attack_row in pending_rows:
-            process_one_defense(attack_row)
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(process_one_defense, row) for row in pending_rows]
-            for future in as_completed(futures):
-                future.result()
-
-    for prompt_type in ("ori", "adv"):
-        summary = write_defense_summary(all_rows, prompt_type, out_dir)
-        _log(
-            "defense-summary",
-            prompt_type=prompt_type,
-            total=summary["total_instances"],
-            accepted=summary["accepted_instances"],
-            rejected=summary["rejected_instances"],
+        ori_patch = Patch(
+            unified_diff=ori_patch_diff,
+            metadata=dict(attack_row.get("ori_agent_metadata", {}))
+            if isinstance(attack_row.get("ori_agent_metadata"), dict)
+            else {},
         )
+        patch_paths = _write_patch_artifacts(
+            out_dir=out_dir,
+            instance_id=instance_id,
+            ori_patch=ori_patch,
+            adv_patch=selected_adv_patch,
+            final_patch=final_patch,
+            apply_status=apply_details,
+        )
+
+        judge_artifact_path = ""
+        if run_judges and final_patch is not None:
+            judge_artifact_path = _run_optional_judges(
+                out_dir=out_dir,
+                llm_client=llm_client,
+                baseline_hash=baseline_config_hash,
+                fidelity_mode=fidelity_mode,
+                instance_id=instance_id,
+                prompt=selected_prompt,
+                patch=final_patch.unified_diff or "",
+                tests=test_specs,
+                repo_code=repo_code,
+                config_dir=config_dir,
+            )
+
+        row = {
+            **attack_row,
+            "baseline_name": baseline_name,
+            "baseline_config_hash": baseline_config_hash,
+            "final_attempt_prompt_hash": selected_prompt_hash,
+            "defense_decision": defense_decision,
+            "defense_signals": defense_signals,
+            "edited_patch_hash": edited_patch_hash,
+            "tests_passed": bool(tests_passed),
+            "apply_ok": bool(apply_ok),
+            "apply_method": str(apply_details.get("method_used", "")),
+            "apply_failure_reason_code": str(apply_details.get("reason_code", "")),
+            "apply_raw_output": str(apply_details.get("raw_output", "")),
+            "attempt_count": attempt_count,
+            "attempt_artifact_paths": attempt_artifact_paths,
+            "test_log_path": str(test_log_path),
+            "static_findings_count": int(static_findings),
+            "static_findings_path": str(static_path),
+            "static_tool_signals": static_signals,
+            "patch_artifacts": patch_paths,
+            "judge_artifact_path": judge_artifact_path,
+            "timestamp_defense_start": start_ts,
+            "timestamp_defense_end": utc_now(),
+            "defense_runtime_sec": round(time.time() - t0, 6),
+        }
+
+        store.append_jsonl("results.jsonl", row)
+        all_rows.append(row)
+        completed_instance_ids.add(instance_id)
 
     return all_rows
 
@@ -815,333 +916,37 @@ def run_one(
     cli_invocation: str,
     run_judges: bool = False,
     swexploit_adv_patches: Optional[str] = None,
+    repo_reset_each_instance: bool = True,
+    max_patch_attempts: int = 2,
+    retry_on_apply_failure: bool = True,
 ) -> List[Dict[str, Any]]:
-    out_dir.mkdir(parents=True, exist_ok=True)
-    results_path = out_dir / "results.jsonl"
-    store = ArtifactStore(out_dir)
-    configs = _load_configs(
-        config_dir=config_dir,
+    run_attack(
         dataset_name=dataset_name,
+        split=split,
+        instance_ids=instance_ids,
+        limit=limit,
         agent_name=agent_name,
         attack_name=attack_name,
-        baseline_name=baseline_name,
-    )
-    if swexploit_adv_patches and attack_name == "swexploit":
-        configs["attack"] = dict(configs["attack"])
-        configs["attack"]["mode"] = "prebuilt_json"
-        configs["attack"]["swexploit_adv_patches"] = str(swexploit_adv_patches)
-    config_hashes = {name: config_hash(payload) for name, payload in configs.items()}
-
-    existing_rows: List[Dict[str, Any]] = []
-    completed_instance_ids: set[str] = set()
-    if results_path.exists():
-        existing_rows = load_jsonl_rows(results_path)
-        for row in existing_rows:
-            if (
-                row.get("dataset") == dataset_name
-                and row.get("agent_config_hash") == config_hashes["agent"]
-                and row.get("attack_config_hash") == config_hashes["attack"]
-                and row.get("baseline_config_hash") == config_hashes["baseline"]
-            ):
-                completed_instance_ids.add(str(row.get("instance_id", "")))
-
-    dataset_plugin = str(configs["dataset"].get("plugin", dataset_name))
-    agent_plugin = str(configs["agent"].get("plugin", agent_name))
-    attack_plugin = str(configs["attack"].get("plugin", attack_name))
-    baseline_plugin = str(configs["baseline"].get("plugin", baseline_name))
-
-    dataset_obj = get_dataset(dataset_plugin)()
-    llm_client = LLMClient(out_dir / "artifacts" / "llm_cache")
-    agent_obj = get_agent(agent_plugin)(configs["agent"])
-    attack_obj = get_attack(attack_plugin)(
-        configs["attack"], llm_client, config_hashes["attack"], out_dir, fidelity_mode
-    )
-    baseline_obj = get_baseline(baseline_plugin)(
-        configs["baseline"], llm_client, config_hashes["baseline"], out_dir, fidelity_mode
-    )
-
-    target_split = split or str(configs["dataset"].get("split", "test"))
-    data_result = dataset_obj.load(
-        split=target_split,
-        config=configs["dataset"],
-        runtime_dir=out_dir / "runtime",
-        limit=limit,
-        instance_ids=list(instance_ids) if instance_ids else None,
-    )
-
-    tool_flags = _tool_availability(configs["agent"])
-    skipped_instances = sum(1 for inst in data_result.instances if inst.instance_id in completed_instance_ids)
-    warnings = list(data_result.warnings)
-    if skipped_instances:
-        warnings.append(f"resume_detected: skipped {skipped_instances} completed instance(s)")
-    dataset_report = build_dataset_report(
-        dataset=dataset_name,
-        split=target_split,
-        total_loaded=len(data_result.instances),
-        total_selected=max(0, len(data_result.instances) - skipped_instances),
-        skipped=skipped_instances,
-        failed=len(data_result.errors),
-        failure_reasons=data_result.errors,
-        warnings=warnings,
-        tool_availability=tool_flags,
-    )
-    store.write_json("dataset_report.json", dataset_report)
-
-    integration_spec = build_integration_spec(
-        run_id=out_dir.name,
-        schema_version=SCHEMA_VERSION,
         fidelity_mode=fidelity_mode,
+        out_dir=out_dir,
+        config_dir=config_dir,
         cli_invocation=cli_invocation,
-        selected_plugins={
-            "dataset": dataset_plugin,
-            "agent": agent_plugin,
-            "attack": attack_plugin,
-            "baseline": baseline_plugin,
-        },
-        selected_configs={
-            "dataset": {
-                "name": dataset_name,
-                "hash": config_hashes["dataset"],
-                "config": configs["dataset"],
-            },
-            "agent": {
-                "name": agent_name,
-                "hash": config_hashes["agent"],
-                "config": configs["agent"],
-            },
-            "attack": {
-                "name": attack_name,
-                "hash": config_hashes["attack"],
-                "config": configs["attack"],
-            },
-            "baseline": {
-                "name": baseline_name,
-                "hash": config_hashes["baseline"],
-                "config": configs["baseline"],
-            },
-        },
+        swexploit_adv_patches=swexploit_adv_patches,
     )
-    store.write_json("integration_spec.json", integration_spec)
-
-    all_rows: List[Dict[str, Any]] = list(existing_rows)
-    _prev_repo_path: Optional[str] = None
-    for instance in data_result.instances:
-        if instance.instance_id in completed_instance_ids:
-            continue
-
-        # Cleanup previous repo if we moved to a different one (save disk).
-        cur_repo_path = instance.repo_snapshot.path
-        if _prev_repo_path and _prev_repo_path != cur_repo_path:
-            _cleanup_repo(_prev_repo_path, data_result.instances, completed_instance_ids)
-        _prev_repo_path = cur_repo_path
-
-        t0 = time.time()
-        start_ts = utc_now()
-        repo_code = {
-            "instance_id": instance.instance_id,
-            "dataset": instance.dataset,
-            "split": instance.split,
-            "repo_id": instance.repo_snapshot.repo_id,
-            "base_commit": instance.repo_snapshot.base_commit,
-            "path": instance.repo_snapshot.path,
-            "run_root": str(out_dir),
-        }
-        
-        repo_path = Path(instance.repo_snapshot.path)
-        repo_path.mkdir(parents=True, exist_ok=True)
-        repo_backup = _make_nongit_backup(repo_path)
-        backup_path = repo_backup[1] if repo_backup else None
-
-        ori_prompt = instance.prompt
-        ori_prompt_hash = sha256_text(ori_prompt)
-        _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-        repo_code["pass_label"] = "benign"
-        ori_patch = agent_obj.agent(repo_code, ori_prompt, instance.tests)
-
-        adv_prompt = attack_obj.attack(repo_code, ori_prompt, instance.tests)
-        adv_prompt_hash = sha256_text(adv_prompt)
-        attack_meta_early = dict(getattr(attack_obj, "last_metadata", {}))
-        _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-        repo_code["pass_label"] = "adv"
-        adv_patch = agent_obj.agent(repo_code, adv_prompt, instance.tests)
-        _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-
-        prebuilt_adv_patch = attack_meta_early.get("prebuilt_adv_patch")
-        if isinstance(prebuilt_adv_patch, str) and prebuilt_adv_patch.strip():
-            adv_patch = Patch(
-                unified_diff=prebuilt_adv_patch,
-                metadata={
-                    **adv_patch.metadata,
-                    "source": "swexploit_prebuilt_json",
-                    "selected_patch_id": attack_meta_early.get("selected_patch_id", ""),
-                    "selection_key": attack_meta_early.get("selection_key", ""),
-                },
-            )
-
-        attack_meta = dict(getattr(attack_obj, "last_metadata", {}))
-        base_meta = {
-            "dataset": instance.dataset,
-            "split": instance.split,
-            "instance_id": instance.instance_id,
-            "repo_id": instance.repo_snapshot.repo_id,
-            "base_commit": instance.repo_snapshot.base_commit,
-            "agent_name": agent_name,
-            "agent_config_hash": config_hashes["agent"],
-            "attack_name": attack_name,
-            "attack_config_hash": config_hashes["attack"],
-            "attack_mode": attack_meta.get("mode", ""),
-            "baseline_name": baseline_name,
-            "baseline_config_hash": config_hashes["baseline"],
-            "fidelity_mode": fidelity_mode,
-            "attack_provider": attack_meta.get("provider", "none"),
-            "attack_model": attack_meta.get("model", "none"),
-            "attack_prompt_hash": attack_meta.get("prompt_hash", ""),
-            "attack_response_hash": attack_meta.get("response_hash", ""),
-            "attack_artifact_path": attack_meta.get("artifact_path", ""),
-            "attack_cache_hit": bool(attack_meta.get("cache_hit", False)),
-            "attack_cache_key": attack_meta.get("cache_key", ""),
-            "attack_provider_fallback": bool(attack_meta.get("provider_fallback", False)),
-            "attack_tool_blocked": bool(attack_meta.get("tool_blocked", False)),
-            "attack_token_usage": attack_meta.get("token_usage", {}),
-            "attack_objective_tags": attack_meta.get("objective_tags", []),
-            "attack_stealth_constraints": attack_meta.get("stealth_constraints", []),
-            "attack_selected_patch_id": attack_meta.get("selected_patch_id", ""),
-            "attack_source_json_path": attack_meta.get("source_json_path", ""),
-            "attack_source_json_hash": attack_meta.get("source_json_hash", ""),
-            "original_prompt_hash": ori_prompt_hash,
-            "adv_prompt_hash": adv_prompt_hash,
-            "ori_patch_hash": sha256_text(ori_patch.unified_diff or ""),
-            "adv_patch_hash": sha256_text(adv_patch.unified_diff or ""),
-            "patch_hash": sha256_text(adv_patch.unified_diff or ""),
-            "ori_agent_metadata": ori_patch.metadata,
-            "adv_agent_metadata": adv_patch.metadata,
-        }
-
-        def run_pass_one(prompt: str, patch: Patch, prompt_type: str) -> Dict[str, Any]:
-            pass_t0 = time.time()
-            pass_start = utc_now()
-            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-            repo_code_for_pass = dict(repo_code)
-            repo_code_for_pass["prompt_type"] = prompt_type
-            repo_code_for_pass["label_hint"] = 1 if prompt_type == "adv" else 0
-            repo_code_for_pass["patch_hash"] = sha256_text(patch.unified_diff or "")
-            repo_code_for_pass["prompt_hash"] = sha256_text(prompt or "")
-
-            decision_raw = baseline_obj.defense(prompt, patch.unified_diff, instance.tests, repo_code_for_pass)
-            defense_signals = dict(getattr(baseline_obj, "last_signals", {}))
-            defense_decision = "reject"
-            final_patch: Optional[Patch] = None
-            edited_patch_hash = ""
-            apply_ok = False
-            apply_message = "rejected"
-
-            if decision_raw is True:
-                defense_decision = "accept"
-                final_patch = patch
-            elif decision_raw is False:
-                defense_decision = "reject"
-            elif isinstance(decision_raw, str):
-                defense_decision = "edit"
-                if looks_like_unified_diff(decision_raw):
-                    final_patch = Patch(unified_diff=decision_raw, metadata={"edited_by_defense": True})
-                    edited_patch_hash = sha256_text(decision_raw)
-                else:
-                    edited_prompt = decision_raw
-                    defense_signals["edited_prompt_hash"] = sha256_text(edited_prompt)
-                    replacement_patch = agent_obj.agent(repo_code_for_pass, edited_prompt, instance.tests)
-                    final_patch = replacement_patch
-                    edited_patch_hash = sha256_text(replacement_patch.unified_diff or "")
-
-            test_log_path = out_dir / "logs" / "tests" / f"{instance.instance_id}_{prompt_type}.log"
-            tests_passed = False
-            extract_only = bool(defense_signals.get("extract_only", False))
-
-            if extract_only:
-                apply_message = "skipped_extract_only"
-                test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(test_log_path, "Runner final apply/test step skipped for extract-only feature generation.\n")
-            elif baseline_plugin in {"static_bandit", "static_semgrep"}:
-                apply_message = "skipped_in_runner"
-                test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(test_log_path, "Runner final apply/test step disabled for static-checker workflow.\n")
-            elif final_patch is not None:
-                apply_ok, apply_message = apply_patch(repo_path, final_patch.unified_diff or "")
-                if apply_ok:
-                    tests_passed, _ = run_repo_tests(instance.tests, repo_path, test_log_path)
-                else:
-                    test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                    atomic_write_text(test_log_path, f"Patch apply failed: {apply_message}\n")
-            else:
-                test_log_path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(test_log_path, "Patch rejected before apply.\n")
-
-            patch_paths = {}
-            if prompt_type == "adv":
-                patch_paths = _write_patch_artifacts(
-                    out_dir=out_dir,
-                    instance_id=instance.instance_id,
-                    ori_patch=ori_patch,
-                    adv_patch=adv_patch,
-                    final_patch=final_patch,
-                    apply_status={"applied": apply_ok, "message": apply_message},
-                )
-
-            judge_artifact_path = ""
-            if run_judges and final_patch is not None and prompt_type == "adv":
-                judge_artifact_path = _run_optional_judges(
-                    out_dir=out_dir,
-                    llm_client=llm_client,
-                    baseline_hash=config_hashes["baseline"],
-                    fidelity_mode=fidelity_mode,
-                    instance_id=instance.instance_id,
-                    prompt=prompt,
-                    patch=final_patch.unified_diff or "",
-                    tests=instance.tests,
-                    repo_code=repo_code_for_pass,
-                    config_dir=config_dir,
-                )
-
-            return {
-                **base_meta,
-                "edited_patch_hash": edited_patch_hash,
-                "prompt_type": prompt_type,
-                "defense_decision": defense_decision,
-                "defense_signals": defense_signals,
-                "tests_passed": bool(tests_passed),
-                "test_log_path": str(test_log_path),
-                "patch_artifacts": patch_paths,
-                "judge_artifact_path": judge_artifact_path,
-                "timestamp_start": pass_start,
-                "timestamp_end": utc_now(),
-                "runtime_sec": round(time.time() - pass_t0, 6),
-            }
-
-        try:
-            for prompt_type, prompt, patch in (("ori", ori_prompt, ori_patch), ("adv", adv_prompt, adv_patch)):
-                row = run_pass_one(prompt, patch, prompt_type)
-                store.append_jsonl("results.jsonl", row)
-                all_rows.append(row)
-            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-        finally:
-            if repo_backup:
-                repo_backup[0].cleanup()
-        completed_instance_ids.add(instance.instance_id)
-
-    # Cleanup last repo if applicable.
-    if _prev_repo_path:
-        _cleanup_repo(_prev_repo_path, data_result.instances, completed_instance_ids)
-        
-    for prompt_type in ("ori", "adv"):
-        summary = write_defense_summary(all_rows, prompt_type, out_dir)
-        _log(
-            "run-one-summary",
-            prompt_type=prompt_type,
-            total=summary["total_instances"],
-            accepted=summary["accepted_instances"],
-            rejected=summary["rejected_instances"],
-        )
-        
-    return all_rows
+    return run_defense(
+        attack_results_path=out_dir / "attack_dataset.jsonl",
+        baseline_name=baseline_name,
+        fidelity_mode=fidelity_mode,
+        out_dir=out_dir,
+        config_dir=config_dir,
+        cli_invocation=cli_invocation,
+        instance_ids=instance_ids,
+        limit=limit,
+        run_judges=run_judges,
+        repo_reset_each_instance=repo_reset_each_instance,
+        max_patch_attempts=max_patch_attempts,
+        retry_on_apply_failure=retry_on_apply_failure,
+    )
 
 
 def run_matrix(
@@ -1161,6 +966,9 @@ def run_matrix(
     limit = matrix_config.get("limit")
     run_judges = bool(matrix_config.get("run_judges", False))
     swexploit_adv_patches = matrix_config.get("swexploit_adv_patches")
+    repo_reset_each_instance = bool(matrix_config.get("repo_reset_each_instance", True))
+    max_patch_attempts = int(matrix_config.get("max_patch_attempts", 2))
+    retry_on_apply_failure = bool(matrix_config.get("retry_on_apply_failure", True))
 
     rows: List[Dict[str, Any]] = []
     for idx, (dataset, agent, attack, baseline, fidelity_mode) in enumerate(
@@ -1184,6 +992,9 @@ def run_matrix(
                 cli_invocation=cli_invocation,
                 run_judges=run_judges,
                 swexploit_adv_patches=str(swexploit_adv_patches) if swexploit_adv_patches else None,
+                repo_reset_each_instance=repo_reset_each_instance,
+                max_patch_attempts=max_patch_attempts,
+                retry_on_apply_failure=retry_on_apply_failure,
             )
         )
 

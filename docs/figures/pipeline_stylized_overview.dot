@@ -1,0 +1,107 @@
+digraph PipelineStylizedOverview {
+  rankdir=LR;
+  graph [
+    fontname="Helvetica",
+    fontsize=11,
+    labelloc="t",
+    label="Figure 4. Stylized Design Overview of the Attack Defense APR Pipeline",
+    splines=ortho,
+    nodesep=0.5,
+    ranksep=0.8
+  ];
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=10, color="#444444", penwidth=1.1];
+  edge [fontname="Helvetica", fontsize=9, color="#444444", arrowsize=0.8];
+
+  Legend [label="Execution flow: Step 1 context and baseline, Step 2 adversarial issue and patch, Step 3 defense and CI CD evaluation", fillcolor="#e9f2ff", color="#4472c4"];
+
+  subgraph cluster_inputs {
+    label="Pipeline inputs";
+    color="#bdbdbd";
+    style="rounded,filled";
+    fillcolor="#f7f7f7";
+
+    InRepo [label="Read only repo snapshot and tests", fillcolor="#f7f7f7"];
+    InDev [label="Developer issue statement", fillcolor="#f7f7f7"];
+    InAtk [label="Attacker objective and payload template", fillcolor="#f7f7f7"];
+  }
+
+  subgraph cluster_step1 {
+    label="Step 1 Program context and baseline patch";
+    color="#3d6fb4";
+    style="rounded,filled";
+    fillcolor="#e7f0ff";
+
+    Ctx [label="Dataset loader and repo context builder", fillcolor="#e7f0ff"];
+    OriAgent [label="Original agent call", fillcolor="#e7f0ff"];
+    OriPatch [label="Original patch diff", fillcolor="#e7f0ff"];
+
+    Ctx -> OriAgent -> OriPatch;
+  }
+
+  subgraph cluster_step2 {
+    label="Step 2 Adversarial issue and patch generation";
+    color="#6e53a6";
+    style="rounded,filled";
+    fillcolor="#efe7ff";
+
+    AttackGen [label="Attack generator", fillcolor="#efe7ff"];
+    AdvIssue [label="Adversarial issue statement", fillcolor="#efe7ff"];
+
+    subgraph cluster_apr_agent {
+      label="APR agent";
+      color="#d92d20";
+      style="rounded,filled";
+      fillcolor="#fff4f2";
+
+      AdvAgent [label="APR agent on adversarial prompt", fillcolor="#fff4f2"];
+      Backbones [label="LLM backbones: gemini, claude_code, openhands, sweagent", fillcolor="#fff4f2"];
+    }
+
+    AdvPatch [label="Adversarial patch diff", fillcolor="#efe7ff"];
+
+    AttackGen -> AdvIssue -> AdvAgent -> AdvPatch;
+    Backbones -> AdvAgent;
+  }
+
+  subgraph cluster_step3 {
+    label="Step 3 Defense and CI CD evaluation";
+    color="#2f8a4b";
+    style="rounded,filled";
+    fillcolor="#e8f7ea";
+
+    Defense [label="Defense baseline decision", fillcolor="#e8f7ea"];
+    Resolver [label="Decision resolver accept reject edit", fillcolor="#e8f7ea"];
+    Apply [label="Patch apply", fillcolor="#e8f7ea"];
+    Tests [label="Targeted tests", fillcolor="#e8f7ea"];
+    Static [label="Static checks", fillcolor="#e8f7ea"];
+    Judges [label="Optional LLM judges", fillcolor="#e8f7ea"];
+
+    Defense -> Resolver -> Apply;
+    Apply -> Tests;
+    Apply -> Static;
+    Apply -> Judges;
+  }
+
+  PassOut [label="Accepted patch path", fillcolor="#eef7ff", color="#2b6cb0"];
+  FailOut [label="Rejected or apply failed path", fillcolor="#fdecec", color="#b42318"];
+  Artifacts [label="Artifacts: results.jsonl, summary.csv, logs, patch diffs", fillcolor="#eef7ff", color="#2b6cb0"];
+
+  Legend -> InRepo;
+  InRepo -> Ctx;
+  InDev -> Ctx;
+  InDev -> AttackGen;
+  InAtk -> AttackGen;
+  OriPatch -> AttackGen [style=dashed, label="baseline context"];
+  AdvIssue -> Defense;
+  AdvPatch -> Defense;
+  Resolver -> Apply [label="accept or edit diff", color="#2f8a4b", penwidth=2];
+  Resolver -> FailOut [label="reject", color="#d92d20", penwidth=2];
+  Tests -> PassOut [color="#2f8a4b", penwidth=2];
+  Static -> PassOut [color="#2f8a4b", penwidth=2];
+  Judges -> PassOut [color="#2f8a4b", penwidth=2];
+
+  OriPatch -> Artifacts;
+  AdvPatch -> Artifacts;
+  PassOut -> Artifacts;
+  FailOut -> Artifacts;
+}

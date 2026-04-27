@@ -1,0 +1,28 @@
+plugin: structural_misalignment
+data_preparation:
+  train_benign_attack_dataset_paths:
+    - outputs/benign_train/attack_dataset.jsonl
+  train_malicious_attack_dataset_paths:
+    - outputs/malicious_train/attack_dataset.jsonl
+  test_benign_attack_dataset_paths:
+    - outputs/benign_test/attack_dataset.jsonl
+  test_malicious_attack_dataset_paths:
+    - outputs/malicious_test/attack_dataset.jsonl
+training:
+  output_dir: data/models/structural_misalignment/hetero_gnn
+  hidden_dim: 128
+  dropout: 0.1
+  learning_rate: 0.001
+  epochs: 10
+  batch_size: 8
+  seed: 42
+  embedding_model_name: microsoft/codebert-base
+  embedding_pooling: mean
+  link_similarity_threshold: 0.35
+  link_topk_fallback: 1
+graph_pipeline:
+  allow_hunk_fallback: true
+  parsers:
+    prompt: deterministic_subtasks
+    patch: cfg_ast
+    linking: embedding_similarity

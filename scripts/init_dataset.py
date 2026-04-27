@@ -12,6 +12,7 @@ import yaml
 
 
 DATASET_CFG_MAP = {
+    "swebench": "swebench.yaml",
     "swebench_lite": "lite.yaml",
     "swebench_pro": "pro.yaml",
     "swebench_plus": "plus.yaml",
@@ -30,7 +31,7 @@ def main() -> int:
     parser.add_argument(
         "--dataset",
         required=True,
-        choices=["swebench_lite", "swebench_pro", "swebench_plus"],
+        choices=["swebench", "swebench_lite", "swebench_pro", "swebench_plus"],
     )
     parser.add_argument("--repo-path", required=True, help="Absolute path to local checkout")
     parser.add_argument("--base-commit", default="HEAD", help="Base commit for the sample row")

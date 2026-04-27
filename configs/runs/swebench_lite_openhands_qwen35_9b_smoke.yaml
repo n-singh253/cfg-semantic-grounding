@@ -1,0 +1,13 @@
+datasets: [swebench_lite]
+split: test
+limit: 1
+agents: [openhands_qwen35_9b]
+attacks: [none]
+baselines:
+  - prompt_filter
+  - structural_misalignment
+fidelity_modes: [llm]
+run_judges: false
+repo_reset_each_instance: true
+max_patch_attempts: 1
+retry_on_apply_failure: false

@@ -33,12 +33,12 @@ class PromptParserProtocol(Protocol):
         allow_provider_fallback: bool,
         system_prompt: str,
         **kwargs: Any,
-    ) -> Tuple[List[str], Dict[str, Any]]:
+    ) -> Tuple[List[Any], Dict[str, Any]]:
         """Parse problem statement into subtasks.
         
         Returns:
             Tuple of (subtasks, metadata)
-            - subtasks: List of subtask strings
+            - subtasks: List of structured subtask dicts or raw strings to normalize
             - metadata: Dict with prompt_hash, cache_hit, token_usage, etc.
         """
         ...

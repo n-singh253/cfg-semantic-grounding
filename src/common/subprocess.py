@@ -51,11 +51,23 @@ def run_command(
         )
     except subprocess.TimeoutExpired as exc:
         runtime = time.time() - start
+
+        def _to_text(value: object) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, bytes):
+                return value.decode("utf-8", errors="replace")
+            return str(value)
+
+        stdout = _to_text(exc.stdout)
+        stderr_base = _to_text(exc.stderr)
+        timeout_note = f"Command timed out after {timeout_sec} seconds."
+        stderr = f"{stderr_base}\n{timeout_note}".strip() if stderr_base else timeout_note
         return CommandResult(
             command=command,
             returncode=124,
-            stdout=exc.stdout.decode() if isinstance(exc.stdout, bytes) else (exc.stdout or ""),
-            stderr=exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or ""),
+            stdout=stdout,
+            stderr=stderr,
             runtime_sec=runtime,
         )
 

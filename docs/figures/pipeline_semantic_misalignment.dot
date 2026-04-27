@@ -1,0 +1,48 @@
+digraph PipelineSemanticMisalignment {
+  rankdir=TB;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t", label="Figure 5. Semantic Misalignment Defense (Modules and Data Contracts)", splines=ortho];
+  node  [shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#222222", fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9, color="#333333"];
+
+  I0 [label="(0) Defense invocation"];
+  C1 [label="(1) Config normalize and parser selection"];
+  P1 [label="(2) Patch parser: cfg_ast or llm_chunks"];
+  S1 [label="(3) CFG stats computation and diagnostics"];
+  T1 [label="(4) Prompt parser: llm_subtasks"];
+  G1 [label="(5) Linker: llm_grounding or embedding_similarity"];
+  M1 [label="(6) Model bundle load and schema checks"];
+  MF [label="(7) Mode family", shape=diamond, style="filled", fillcolor="#fff8e6", color="#8a6d1f"];
+  F1 [label="(8a) Structural feature extraction"];
+  F2 [label="(8b) Universal feature extraction"];
+  F3 [label="(8c) Optional severity analysis for universal modes"];
+  I1 [label="(9) Inference: predict_reject_score"];
+  D1 [label="(10) Policy: decide_from_policy(threshold)"];
+  O1 [label="(11) Boolean defense decision", fillcolor="#eef7ff", color="#2b6cb0"];
+  O2 [label="(12) last_signals + artifact_paths + stage_status", fillcolor="#eef7ff", color="#2b6cb0"];
+  E1 [label="Error path: stage_failed + failure_flags", fillcolor="#fdecec", color="#b42318"];
+
+  I0 -> C1 [label="prompt + code_or_patch + repo_code + config"];
+  C1 -> P1 [label="mode + threshold + policy + parser names"];
+  P1 -> S1 [label="cfg_diff + candidate_nodes + cfg_diagnostics"];
+  S1 -> T1 [label="cfg_stats artifact"];
+  T1 -> G1 [label="subtasks + llm metadata"];
+  G1 -> M1 [label="links + grounding metadata"];
+  M1 -> MF [label="model + scaler + imputer + optional vectorizer + feature_list"];
+  MF -> F1 [label="structural_only / similarity_only / structural_combined"];
+  MF -> F2 [label="full_universal / severity_only_universal / no_security"];
+  F2 -> F3 [label="if universal mode"];
+  F1 -> I1 [label="feature_row + selected_columns"];
+  F2 -> I1 [label="feature_row + selected_columns"];
+  F3 -> I1 [label="severity payload"];
+  I1 -> D1 [label="score + missing_feature_columns_filled_zero"];
+  D1 -> O1 [label="accepted bool"];
+  D1 -> O2 [label="key_metrics + parser metadata + model_output + artifacts"];
+
+  P1 -> E1 [label="exception", color="#b42318"];
+  T1 -> E1 [label="exception", color="#b42318"];
+  G1 -> E1 [label="exception", color="#b42318"];
+  M1 -> E1 [label="exception", color="#b42318"];
+  I1 -> E1 [label="exception", color="#b42318"];
+  E1 -> O1 [label="return False", color="#b42318"];
+  E1 -> O2 [label="error signals", color="#b42318"];
+}

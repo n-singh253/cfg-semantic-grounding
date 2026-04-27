@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import json
 import re
 import shlex
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -19,11 +21,16 @@ from src.common.types import Patch
 def _agent_artifact_dir(agent_name: str, repo_code: Dict[str, Any]) -> Path:
     run_root = repo_code.get("run_root")
     instance_id = str(repo_code.get("instance_id", "unknown"))
-    pass_label = str(repo_code.get("pass_label", ""))
+    artifact_tag = str(
+        repo_code.get("agent_artifact_tag", "")
+        or repo_code.get("pass_label", "")
+        or ""
+    ).strip()
     if run_root:
         base = Path(str(run_root)) / "artifacts" / "agents" / instance_id / agent_name
-        return base / pass_label if pass_label else base
-    return Path(str(repo_code.get("path", "."))) / ".agent_artifacts" / agent_name
+        return base / artifact_tag if artifact_tag else base
+    base = Path(str(repo_code.get("path", "."))) / ".agent_artifacts" / agent_name
+    return base / artifact_tag if artifact_tag else base
 
 
 def _serialize_tests(all_tests: List[Any]) -> str:
@@ -66,37 +73,116 @@ def _strip_markdown_fences(text: str) -> str:
     return raw.strip()
 
 
-def _extract_unified_diff(text: str) -> str:
-    raw = _strip_markdown_fences(text)
-    if not raw:
+def _first_diff_start_index(lines: List[str]) -> int:
+    for idx, line in enumerate(lines):
+        if line.startswith("diff --git ") or line.startswith("--- "):
+            return idx
+    return -1
+
+
+def _extract_diff_block(raw: str) -> str:
+    lines = raw.splitlines()
+    start = _first_diff_start_index(lines)
+    if start < 0:
         return ""
 
-    # Find the last occurrence of a diff --git block so we get the final patch
-    # (mini-swe-agent emits its full trajectory to stdout; the real patch is last).
-    last_diff_pos = raw.rfind("diff --git ")
-    if last_diff_pos != -1:
-        candidate = raw[last_diff_pos:].strip()
-        diff_lines: list[str] = []
-        in_diff = False
-        for line in candidate.splitlines():
-            if line.startswith("diff --git ") or line.startswith("--- ") or line.startswith("+++ ") or line.startswith("@@") or line.startswith(" ") or line.startswith("+") or line.startswith("-") or line.startswith("index ") or line.startswith("new file") or line.startswith("deleted file") or line.startswith("rename ") or line.startswith("similarity "):
-                in_diff = True
-                diff_lines.append(line)
-            elif in_diff and line == "":
-                diff_lines.append(line)
-            elif in_diff:
-                break
-        result = "\n".join(diff_lines).strip()
-        if result:
-            return result
+    header_prefixes = (
+        "diff --git ",
+        "index ",
+        "--- ",
+        "+++ ",
+        "@@",
+        "new file mode ",
+        "deleted file mode ",
+        "similarity index ",
+        "rename from ",
+        "rename to ",
+        "old mode ",
+        "new mode ",
+        "Binary files ",
+    )
 
-    if looks_like_unified_diff(raw):
-        # Normalize by starting from first file header when possible.
-        lines = raw.splitlines()
-        for idx, line in enumerate(lines):
-            if line.startswith("--- ") or line.startswith("diff --git "):
-                return "\n".join(lines[idx:]).strip()
-        return raw.strip()
+    out: List[str] = []
+    for line in lines[start:]:
+        if line.startswith("```"):
+            break
+        if (
+            line.startswith(header_prefixes)
+            or line.startswith("+")
+            or line.startswith("-")
+            or line.startswith(" ")
+            or line == r"\ No newline at end of file"
+        ):
+            out.append(line)
+            continue
+        if out:
+            # Stop once prose/non-diff text begins after diff started.
+            break
+    return "\n".join(out).strip()
+
+
+def _extract_unified_diff(text: str) -> str:
+    raw = text or ""
+    if not raw:
+        return ""
+    extracted = _extract_diff_block(raw)
+    if extracted and looks_like_unified_diff(extracted):
+        return extracted
+
+    fenced = _strip_markdown_fences(raw)
+    extracted_fenced = _extract_diff_block(fenced)
+    if extracted_fenced and looks_like_unified_diff(extracted_fenced):
+        return extracted_fenced
+
+    if looks_like_unified_diff(fenced):
+        return fenced.strip()
+    return ""
+
+
+def _nvm_node_major_from_path(path: str) -> int:
+    match = re.search(r"/\.nvm/versions/node/v(\d+)\.", path)
+    if not match:
+        return -1
+    try:
+        return int(match.group(1))
+    except Exception:
+        return -1
+
+
+def _resolve_cli_executable(executable: str) -> str:
+    resolved = shutil.which(executable)
+    if not resolved:
+        return executable
+
+    if executable not in {"gemini", "gemini-cli"}:
+        return resolved
+
+    current_major = _nvm_node_major_from_path(resolved)
+    if current_major >= 20:
+        return resolved
+
+    nvm_root = Path.home() / ".nvm" / "versions" / "node"
+    if not nvm_root.exists():
+        return resolved
+
+    best = resolved
+    best_major = current_major
+    for candidate in sorted(nvm_root.glob("v*/bin/gemini")):
+        major = _nvm_node_major_from_path(str(candidate))
+        if major >= 20 and major > best_major:
+            best = str(candidate)
+            best_major = major
+    return best
+
+
+def _node_for_nvm_gemini(gemini_executable: str) -> str:
+    # /home/<user>/.nvm/versions/node/v20.20.0/bin/gemini -> .../bin/node
+    path = Path(gemini_executable)
+    if path.name not in {"gemini", "gemini-cli"}:
+        return ""
+    node_path = path.parent / "node"
+    if node_path.exists():
+        return str(node_path)
     return ""
 
 
@@ -125,6 +211,18 @@ def _write_invocation_logs(
     }
 
 
+def _git_diff(repo_path: Path) -> str:
+    result = run_command(["git", "diff", "--binary", "HEAD", "--"], cwd=repo_path)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _reset_generated_git_checkout(repo_path: Path) -> None:
+    if not (repo_path / ".git").exists():
+        return
+    run_command(["git", "reset", "--hard", "HEAD"], cwd=repo_path)
+    run_command(["git", "clean", "-fd"], cwd=repo_path)
+
+
 def run_cli_agent(
     *,
     agent_name: str,
@@ -138,16 +236,17 @@ def run_cli_agent(
         raise ValueError(f"{agent_name}: config.command must be a non-empty list")
 
     executable = str(command_template[0])
+    resolved_executable = _resolve_cli_executable(executable)
     behavior = str(config.get("missing_tool_behavior", "fail")).lower()
     artifact_dir = _agent_artifact_dir(agent_name, repo_code)
-    if not command_exists(executable):
+    if not command_exists(resolved_executable):
         artifact_dir.mkdir(parents=True, exist_ok=True)
         missing_tool_path = artifact_dir / "missing_tool.json"
         atomic_write_json(
             missing_tool_path,
             {
                 "agent": agent_name,
-                "missing_tool": executable,
+                "missing_tool": resolved_executable,
                 "behavior": behavior,
             },
         )
@@ -163,7 +262,7 @@ def run_cli_agent(
                 },
             )
         raise RuntimeError(
-            f"{agent_name}: missing required CLI tool '{executable}'. "
+            f"{agent_name}: missing required CLI tool '{resolved_executable}'. "
             f"Details: {missing_tool_path}"
         )
 
@@ -198,14 +297,72 @@ def run_cli_agent(
         "base_commit": str(repo_code.get("base_commit", "unknown")),
     }
     command = [str(part).format(**fmt) for part in command_template]
+    if command:
+        if executable in {"gemini", "gemini-cli"}:
+            node_bin = _node_for_nvm_gemini(resolved_executable)
+            if node_bin:
+                command = [node_bin, resolved_executable, *command[1:]]
+            else:
+                command[0] = resolved_executable
+        else:
+            command[0] = resolved_executable
     cwd = Path(str(repo_code.get("path", ".")))
     timeout_sec = int(config.get("timeout_sec", 120))
-    result = run_command(command, cwd=cwd, timeout_sec=timeout_sec)
+    output_mode = str(config.get("output_mode", "stdout"))
+    if output_mode == "git_diff":
+        _reset_generated_git_checkout(cwd)
+
+    # Gemini CLI reads GEMINI_API_KEY, but this harness commonly uses GOOGLE_API_KEY.
+    # Forward it automatically for command-driven Gemini agents when needed.
+    env_override: Dict[str, str] = {}
+    if executable in {"gemini", "gemini-cli"}:
+        if not os.environ.get("GEMINI_API_KEY") and os.environ.get("GOOGLE_API_KEY"):
+            env_override["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
+    if executable == "openhands":
+        llm_model = os.environ.get("LLM_MODEL") or str(config.get("llm_model", "")).strip()
+        llm_api_key = (
+            os.environ.get("LLM_API_KEY")
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or str(config.get("llm_api_key", "")).strip()
+        )
+        llm_base_url = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+        if llm_model:
+            env_override["LLM_MODEL"] = llm_model
+        if llm_api_key:
+            env_override["LLM_API_KEY"] = llm_api_key
+        if llm_base_url:
+            env_override["LLM_BASE_URL"] = llm_base_url
+        # OpenHands initializes a tmux environment. Very long inherited PATH
+        # values can make tmux fail with "command too long", so pass a compact
+        # path that still includes this venv, user-local tools, and system bins.
+        compact_path = [
+            str(Path(os.environ["VIRTUAL_ENV"]) / "bin") if os.environ.get("VIRTUAL_ENV") else "",
+            str(Path.home() / ".local" / "bin"),
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        env_override["PATH"] = os.pathsep.join(part for part in compact_path if part)
+
+    result = run_command(
+        command,
+        cwd=cwd,
+        env=env_override or None,
+        timeout_sec=timeout_sec,
+    )
+    git_diff_text = _git_diff(cwd) if output_mode == "git_diff" else ""
     log_paths = _write_invocation_logs(artifact_dir, command, agent_prompt, result.stdout, result.stderr)
 
-    output_mode = str(config.get("output_mode", "stdout"))
     output_parser = str(config.get("output_parser", "unified_diff_auto")).lower()
-    if output_mode == "file":
+    if output_mode == "git_diff":
+        diff_text = git_diff_text
+        if bool(config.get("cleanup_git_after_run", True)):
+            _reset_generated_git_checkout(cwd)
+    elif output_mode == "file":
         output_file = str(config.get("output_file", "patch.diff"))
         patch_path = cwd / output_file
         file_text = patch_path.read_text(encoding="utf-8") if patch_path.exists() else ""
@@ -226,6 +383,7 @@ def run_cli_agent(
                     "tool_available": True,
                     "returncode": result.returncode,
                     "empty_output": True,
+                    "env_overrides": sorted(env_override.keys()),
                     "output_parser": output_parser,
                     "command": " ".join(shlex.quote(x) for x in command),
                     **log_paths,
@@ -242,6 +400,7 @@ def run_cli_agent(
             "agent": agent_name,
             "tool_available": True,
             "returncode": result.returncode,
+            "env_overrides": sorted(env_override.keys()),
             "output_parser": output_parser,
             "agent_prompt_hash": sha256_text(agent_prompt),
             "tests_json": tests_serialized,

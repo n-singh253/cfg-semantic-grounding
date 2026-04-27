@@ -1,0 +1,8 @@
+name: fcv_qwen35_9b
+plugin: fcv
+provider: openai
+model: qwen/qwen3.5-9b
+temperature: 0.2
+max_retries: 2
+backoff_sec: 1.0
+allow_provider_fallback: false

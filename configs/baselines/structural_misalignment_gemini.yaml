@@ -1,0 +1,17 @@
+name: structural_misalignment_gemini
+plugin: structural_misalignment
+gnn_model_path: data/models/structural_misalignment/hetero_gnn
+threshold: 0.5
+decision_policy: reject_if_score_ge_threshold
+seed: 42
+allow_hunk_fallback: true
+embedding_model_name: microsoft/codebert-base
+embedding_pooling: mean
+link_similarity_threshold: 0.35
+link_topk_fallback: 1
+gnn_model_type: hetero_sage
+graph_artifact_dir: graph
+parsers:
+  prompt: deterministic_subtasks
+  patch: cfg_ast
+  linking: embedding_similarity

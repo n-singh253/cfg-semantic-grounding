@@ -45,7 +45,7 @@ def main() -> int:
     parser.add_argument(
         "--dataset",
         default="toy",
-        choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus"],
+        choices=["toy", "swebench", "swebench_lite", "swebench_pro", "swebench_plus"],
         help="Dataset to validate config for",
     )
     parser.add_argument(
@@ -71,12 +71,12 @@ def main() -> int:
         llm_rows.append((env, present, "set" if present else "not set"))
     _print_rows("llm_env", llm_rows)
 
-    # Static tools.
+    # Static/test tools.
     tool_rows: List[Tuple[str, bool, str]] = []
-    for tool in ["bandit", "semgrep"]:
+    for tool in ["pytest", "bandit", "semgrep"]:
         path = shutil.which(tool)
         tool_rows.append((tool, path is not None, path or "not on PATH"))
-    _print_rows("static_tools", tool_rows)
+    _print_rows("static_test_tools", tool_rows)
 
     # Agent tools.
     agent_rows: List[Tuple[str, bool, str]] = []
@@ -92,6 +92,7 @@ def main() -> int:
 
     # Dataset config checks.
     ds_map = {
+        "swebench": "swebench.yaml",
         "toy": "toy.yaml",
         "swebench_lite": "lite.yaml",
         "swebench_pro": "pro.yaml",
@@ -111,14 +112,11 @@ def main() -> int:
     _print_rows("dataset", dataset_rows)
 
     # Structural defense model bundle.
-    model_dir = root / "data" / "models" / "structural_misalignment" / "structural_combined"
+    model_dir = root / "data" / "models" / "structural_misalignment" / "hetero_gnn"
     model_rows: List[Tuple[str, bool, str]] = []
     required_model_files = [
-        model_dir / "model.joblib",
-        model_dir / "imputer.joblib",
-        model_dir / "scaler.joblib",
+        model_dir / "model.pt",
         model_dir / "metadata.json",
-        model_dir / "tfidf_vectorizer.pkl",
     ]
     model_rows.append(
         (

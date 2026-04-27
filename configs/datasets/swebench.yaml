@@ -1,0 +1,6 @@
+name: swebench
+plugin: swebench
+variant: full
+split: test
+max_instances: 10000
+data_path: data/swebench_full.jsonl

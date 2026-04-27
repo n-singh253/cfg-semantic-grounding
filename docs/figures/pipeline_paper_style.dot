@@ -1,0 +1,113 @@
+digraph PipelinePaperStyle {
+  rankdir=LR;
+  graph [
+    fontname="Helvetica",
+    fontsize=11,
+    labelloc="t",
+    label="Figure 3. End to End Attack and Defense Pipeline",
+    splines=ortho,
+    nodesep=0.45,
+    ranksep=0.7
+  ];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=10, color="#333333", penwidth=1.1];
+  edge  [fontname="Helvetica", fontsize=9, color="#333333", arrowsize=0.8];
+
+  subgraph cluster_inputs {
+    label="Inputs and setup";
+    color="#b5b5b5";
+    style="rounded,filled";
+    fillcolor="#f7f7f7";
+
+    RunSetup [label="Run config and CLI args", fillcolor="#f4f4f4"];
+    ConfigSpec [label="Config loader and hash registry", fillcolor="#ececec"];
+    Dataset [label="Dataset loader and instance selector", fillcolor="#ececec"];
+    RepoCtx [label="Repo context builder", fillcolor="#ececec"];
+    Developer [label="Developer issue prompt", fillcolor="#f4f4f4"];
+    Attacker [label="Attacker objective prompt", fillcolor="#f4f4f4"];
+
+    RunSetup -> ConfigSpec -> Dataset -> RepoCtx;
+  }
+
+  subgraph cluster_core {
+    label="APR attack and defense core";
+    color="#b5b5b5";
+    style="rounded,filled";
+    fillcolor="#f0f0f0";
+
+    AgentOrig [label="Original agent call", fillcolor="#ececec"];
+    AttackGen [label="Attack generator", fillcolor="#ececec"];
+    AgentAdv [label="Adversarial agent call", fillcolor="#ececec"];
+    Defense [label="Defense baseline decision", fillcolor="#ececec"];
+    Resolver [label="Decision resolver", fillcolor="#ececec"];
+    EditRerun [label="Edited prompt re agent call if needed", fillcolor="#ececec"];
+
+    AgentAdv -> Defense -> Resolver;
+    Resolver -> EditRerun [label="edit prompt string"];
+  }
+
+  subgraph cluster_eval {
+    label="CI CD evaluation";
+    color="#b5b5b5";
+    style="rounded,filled";
+    fillcolor="#f0f0f0";
+
+    Apply [label="Patch apply", fillcolor="#eeeeee"];
+    Tests [label="Targeted tests", fillcolor="#eeeeee"];
+    Static [label="Static checks", fillcolor="#eeeeee"];
+    Judges [label="Optional LLM judges", fillcolor="#eeeeee"];
+
+    Apply -> Tests;
+    Apply -> Static;
+    Apply -> Judges;
+  }
+
+  subgraph cluster_outputs {
+    label="Outputs and artifacts";
+    color="#b5b5b5";
+    style="rounded,filled";
+    fillcolor="#f7f7f7";
+
+    PassOut [label="Outcome A accepted patch path", fillcolor="#e8f8e8", color="#1d7f2f"];
+    RiskOut [label="Outcome B rejected or apply failed path", fillcolor="#fdecec", color="#b42318"];
+    PatchArtifacts [label="Patch artifacts ori adv final apply_status", fillcolor="#ececec"];
+    ResultRow [label="results.jsonl row", fillcolor="#ececec"];
+    Summary [label="summary.csv dataset_report integration_spec", fillcolor="#ececec"];
+    Logs [label="logs tests static judges", fillcolor="#ececec"];
+  }
+
+  ResolverGate [label="Resolver output", shape=diamond, style="filled", fillcolor="#fff8e6", color="#8a6d1f"];
+
+  Developer -> AgentOrig [color="#1d7f2f", penwidth=2];
+  Attacker -> AttackGen [color="#d92d20", penwidth=2];
+  RepoCtx -> AgentOrig;
+  RepoCtx -> AttackGen;
+  RepoCtx -> AgentAdv;
+  RepoCtx -> Defense;
+
+  AttackGen -> AgentAdv [label="adv prompt and attack metadata"];
+  AgentOrig -> Resolver [label="ori patch diff and metadata"];
+  AgentAdv -> Defense [label="adv patch diff and metadata"];
+
+  Resolver -> ResolverGate;
+  ResolverGate -> Apply [label="accept or edit diff", color="#1d7f2f", penwidth=2];
+  EditRerun -> Apply [label="replacement patch"];
+  ResolverGate -> RiskOut [color="#d92d20", penwidth=2];
+
+  Tests -> PassOut [color="#1d7f2f", penwidth=2];
+  Static -> PassOut [color="#1d7f2f", penwidth=2];
+  Judges -> PassOut [color="#1d7f2f", penwidth=2];
+
+  AgentOrig -> PatchArtifacts;
+  AgentAdv -> PatchArtifacts;
+  Resolver -> PatchArtifacts;
+  Apply -> PatchArtifacts;
+  Tests -> Logs;
+  Static -> Logs;
+  Judges -> Logs;
+
+  PassOut -> ResultRow;
+  RiskOut -> ResultRow;
+  PatchArtifacts -> ResultRow;
+  Logs -> ResultRow;
+  ResultRow -> Summary;
+}

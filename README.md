@@ -191,8 +191,11 @@ Edit resolution:
 | `minisweagent` | `configs/agents/minisweagent.yaml` | `minisweagent` |
 | `sweagent`     | `configs/agents/sweagent.yaml`     | `sweagent`     |
 | `openhands`    | `configs/agents/openhands.yaml`    | `openhands`    |
+| `openhands_qwen35_9b` | `configs/agents/openhands_qwen35_9b.yaml` | `openhands` |
 | `claude_code`  | `configs/agents/claude_code.yaml`  | `claude-code`  |
 | `gemini_cli`   | `configs/agents/gemini_cli.yaml`   | `gemini-cli`   |
+
+OpenHands+Qwen setup notes are in `docs/openhands_qwen35_9b.md`.
 
 
 ### `--attack`
@@ -234,21 +237,18 @@ Edit resolution:
 
 `baseline=structural_misalignment` ports the old methodology:
 
-- CFG diff extraction from patch against repo snapshot
-- LLM subtask decomposition from prompt
-- LLM subtask->CFG grounding
-- structural metrics + optional similarity features
+- attack-finalized dataset gating before baseline evaluation
+- deterministic prompt decomposition into structured subtasks
+- deterministic embedding-based subtask->CFG linking
+- hetero graph construction over subtasks, code nodes, and structural edges
+- graph-level GNN inference for benign vs injected classification
 - model inference with explicit `decision_policy`
-- canonical modes: `structural_only`, `similarity_only`, `structural_combined`, `full_universal`, `severity_only_universal`, `no_security`
-- implementation is self-contained under `src/baseline/structural_misalignment/` (`cfg/`, `grounding/`, `features/`, `models/`, `security/`, `plugin.py`)
-
-Default severity behavior is universal-only (`severity_mode: universal`).
-Dataset-marker patterns require explicit debug enablement.
+- implementation is self-contained under `src/baseline/structural_misalignment/` (`cfg/`, `grounding/`, `graph/`, `models/`, `plugin.py`)
 
 Model artifact note:
 
-- `model_path` / `model_paths` in `configs/baselines/structural_misalignment.yaml` points to a sklearn model bundle directory (or file under that directory).
-- Missing/incompatible model artifacts fail clearly and are recorded in `results.jsonl -> defense_signals.error` and `failure_flags.model_missing`.
+- `gnn_model_path` in `configs/baselines/structural_misalignment.yaml` points to a hetero-GNN bundle directory containing `model.pt` and `metadata.json`.
+- Missing/incompatible model artifacts fail clearly and are recorded in `results.jsonl -> defense_signals.error`.
 - No silent heuristic fallback is used on the primary path.
 
 Additional defense config options:
@@ -256,14 +256,10 @@ Additional defense config options:
 - `parsers.prompt`, `parsers.patch`, `parsers.linking`:
 choose parser implementations for subtask extraction, patch parsing, and grounding.
 Example parser-enabled config: `configs/baselines/structural_misalignment_test.yaml`.
-- `requires_gpu`:
-explicit gate for GPU-dependent parser combinations (for example `embedding_similarity`).
-When enabled, the defense validates CUDA + parser deps before running.
-Example GPU config: `configs/baselines/test_new_parsers.yaml`.
-- `max_feature_mismatch_ratio`:
-fail-fast guard for model/feature mismatch during inference.
-If too many model-expected columns are missing from extracted features, inference fails with a clear error.
-Typical value: `0.05` (5%).
+- `embedding_model_name`, `embedding_pooling`, `link_similarity_threshold`, `link_topk_fallback`:
+control deterministic graph construction and linking.
+- `gnn_model_type`, `threshold`, `seed`:
+control the loaded model architecture metadata, decision threshold, and reproducibility settings.
 
 ## Output Artifacts
 
@@ -283,10 +279,9 @@ Patch artifacts per instance:
 
 Structural defense artifacts:
 
-- `artifacts/defenses/<instance_id>/structural_misalignment/cfg_stats.json`
-- `.../subtasks.json`
-- `.../grounding.json`
-- `.../features.json`
+- `artifacts/defenses/<instance_id>/structural_misalignment/graph/graph.json`
+- `.../graph/graph.pt` (when PyG is available)
+- `.../subtasks/similarity_matrix.json` and related deterministic parser/link artifacts
 - `.../model_output.json`
 - `.../severity.json` (`full_universal`/`severity_only_universal`/`no_security`)
 
@@ -323,5 +318,3 @@ This defense port was copied/adapted from the previous repo modules into the new
 | legacy universal feature extractor module                         | `src/baseline/structural_misalignment/features/universal_features.py`                                                                                                                                                   |
 | `utils/security_filters.py`                                       | `src/baseline/structural_misalignment/security/patterns.py`, `src/baseline/structural_misalignment/security/severity.py`                                                                                                |
 | `scripts/run_attack_suite.py` model-bundle/eval-only guardrails   | `src/baseline/structural_misalignment/models/load.py`, `src/baseline/structural_misalignment/models/infer.py`, `src/baseline/structural_misalignment/models/train.py`, `src/baseline/structural_misalignment/plugin.py` |
-
-

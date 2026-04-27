@@ -1,0 +1,14 @@
+digraph PipelineOptions {
+  rankdir=LR;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t", label="Figure 2. Option Space (Current Repository Configurations)"];
+  node  [shape=box, style="rounded,filled", fillcolor="#fafafa", color="#444444", fontname="Helvetica", fontsize=9];
+  edge  [fontname="Helvetica", fontsize=9, color="#333333"];
+
+  DS [label="Datasets: toy, swebench_lite, swebench_pro, swebench_plus"];
+  AG [label="Agents: claude_code, dummy, dummy2, gemini, gemini_cli, minisweagent, openhands, sweagent"];
+  AT [label="Attacks: bug_reports, bug_reports_gemini, fcv, none, swexploit, udora"];
+  BL [label="Baselines and Defenses: agentic_guard, bandit, llama_guard, llama_prompt_guard, llm_judge, llm_judge_gemini, prompt_filter, prompt_rewrite, semgrep, sequence_classifiers_inference, sequence_classifiers_train, structural_misalignment, structural_misalignment_gemini, structural_misalignment_test, test_new_parsers"];
+  FM [label="Fidelity Modes: llm, surrogate_debug"];
+
+  DS -> AG -> AT -> BL -> FM;
+}

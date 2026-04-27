@@ -1,0 +1,35 @@
+digraph PipelineCore {
+  rankdir=TB;
+  graph [fontname="Helvetica", fontsize=11, labelloc="t", label="Figure 1. Evaluation Pipeline (Core Modules and Data Contracts)", splines=ortho];
+  node  [shape=box, style="rounded,filled", fillcolor="#f7f7f7", color="#222222", fontname="Helvetica", fontsize=10];
+  edge  [fontname="Helvetica", fontsize=9, color="#333333"];
+
+  R [label="(0) Run Spec and Config Selection: CLI + YAML configs"];
+  D [label="(1) Dataset Loader: src/dataset/*"];
+  C [label="(2) Repo Context Builder: repo_code"];
+  A1 [label="(3) Original Agent Call: agent(repo_code, ori_prompt, tests)"];
+  K [label="(4) Attack Generator: attack(repo_code, ori_prompt, tests)"];
+  A2 [label="(5) Adversarial Agent Call: agent(repo_code, adv_prompt, tests)"];
+  B [label="(6) Defense Baseline Decision: defense(adv_prompt, adv_patch, tests, repo_code)"];
+  X [label="(7) Decision Resolver"];
+  P [label="(8) Patch Apply: apply_unified_diff(...)"];
+  E [label="(9) Evaluation Stage: tests + static checks"];
+  J [label="(10) Optional LLM Judges"];
+  W [label="(11) Artifact and Result Writer: results.jsonl, summary.csv, artifacts/, logs/", fillcolor="#eef7ff", color="#2b6cb0"];
+
+  R -> D [label="dataset config + split + limit + ids"];
+  D -> C [label="ProblemInstance[]"];
+  C -> A1 [label="repo_code + ori_prompt + tests"];
+  C -> K  [label="repo_code + ori_prompt + tests"];
+  K -> A2 [label="adv_prompt + attack_metadata"];
+  A1 -> X [label="ori_patch + metadata"];
+  A2 -> B [label="adv_patch + metadata"];
+  B -> X  [label="True accept adv_patch; False reject; String edit diff or edit prompt"];
+  X -> P  [label="if final_patch exists"];
+  X -> W  [label="if rejected before apply"];
+  P -> E  [label="apply_status"];
+  X -> J  [label="if run_judges and final_patch exists"];
+  J -> W  [label="judge artifacts"];
+  E -> W  [label="tests/static results + logs"];
+  R -> W  [label="config hashes + selected plugins"];
+}

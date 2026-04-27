@@ -1,0 +1,25 @@
+datasets: [swebench]
+split: test
+limit: 100
+agents: [gemini]
+attacks:
+  - none
+  - bug_reports_gemini
+  - udora_gemini
+  - swexploit_gemini
+  - fcv_gemini
+baselines:
+  - agentic_guard
+  - bandit
+  - llama_guard
+  - llama_prompt_guard
+  - llm_judge_gemini
+  - prompt_filter
+  - prompt_rewrite
+  - semgrep
+  - structural_misalignment_gemini
+fidelity_modes: [llm]
+run_judges: false
+repo_reset_each_instance: true
+max_patch_attempts: 2
+retry_on_apply_failure: true
