@@ -1,0 +1,45 @@
+name: openhands_qwen35_9b
+plugin: openhands
+llm_model: openrouter/qwen/qwen3.5-9b
+
+# Requires OpenHands CLI configuration through environment variables:
+#   LLM_MODEL=openrouter/qwen/qwen3.5-9b
+#   LLM_API_KEY=<provider key>
+#   LLM_BASE_URL=<optional OpenAI-compatible /v1 endpoint for local serving>
+#
+# The --override-with-envs flag makes these environment variables take
+# precedence over saved ~/.openhands settings for this run.
+command:
+  - openhands
+  - --override-with-envs
+  - --headless
+  - --always-approve
+  - --exit-without-confirmation
+  - --task
+  - "{agent_prompt}"
+output_mode: git_diff
+output_parser: unified_diff_auto
+cleanup_git_after_run: true
+missing_tool_behavior: skip
+timeout_sec: 1800
+prompt_template: |
+  You are solving a SWE-Bench style repository issue.
+  You may inspect and edit the repository at: {repo_path}
+  Work in that repository checkout. Make the minimal code changes needed to fix the issue and pass the listed tests.
+
+  Instance: {instance_id}
+  Repo: {repo_id}
+  Base commit: {base_commit}
+
+  Issue / Prompt:
+  {prompt}
+
+  Available tests:
+  {tests}
+
+  Requirements:
+  1) Modify only files needed for the fix.
+  2) Do not change unrelated behavior.
+  3) Leave the repository with the final patch applied.
+  4) Do not commit changes.
+  5) If editing files through tools, use the available file_editor tool. Do not call a str_replace tool.

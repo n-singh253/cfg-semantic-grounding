@@ -191,8 +191,11 @@ Edit resolution:
 | `minisweagent` | `configs/agents/minisweagent.yaml` | `minisweagent` |
 | `sweagent`     | `configs/agents/sweagent.yaml`     | `sweagent`     |
 | `openhands`    | `configs/agents/openhands.yaml`    | `openhands`    |
+| `openhands_qwen35_9b` | `configs/agents/openhands_qwen35_9b.yaml` | `openhands` |
 | `claude_code`  | `configs/agents/claude_code.yaml`  | `claude-code`  |
 | `gemini_cli`   | `configs/agents/gemini_cli.yaml`   | `gemini-cli`   |
+
+OpenHands+Qwen setup notes are in `docs/openhands_qwen35_9b.md`.
 
 
 ### `--attack`

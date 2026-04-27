@@ -232,7 +232,11 @@ class LLMClient:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is not set")
-        client = OpenAI(api_key=api_key)
+        base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("LLM_BASE_URL")
+        client_kwargs: Dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client = OpenAI(**client_kwargs)
         payload: Dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],

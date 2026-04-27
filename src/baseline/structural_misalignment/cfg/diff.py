@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -10,6 +11,10 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from src.baseline.structural_misalignment.cfg.build import build_cfg_for_files
 from src.common.diff import apply_unified_diff
+from src.common.subprocess import run_command
+
+
+RangeMap = Dict[str, List[Tuple[int, int]]]
 
 
 def _node_signature(node: Dict[str, Any], file_path: Optional[str] = None) -> str:
@@ -204,6 +209,45 @@ def get_diff_candidate_nodes(cfg_diff: Dict[str, Any]) -> List[Dict[str, Any]]:
     return nodes
 
 
+def _node_range(node: Dict[str, Any]) -> Tuple[int, int]:
+    start = int(node.get("start_line", 0) or 0)
+    end = int(node.get("end_line", start) or start)
+    if end < start:
+        end = start
+    return start, end
+
+
+def _ranges_overlap(left: Tuple[int, int], right: Tuple[int, int]) -> bool:
+    left_start, left_end = left
+    right_start, right_end = right
+    if left_start <= 0 or right_start <= 0:
+        return False
+    return left_start <= right_end and right_start <= left_end
+
+
+def _node_overlaps_changed_ranges(node: Dict[str, Any], file_path: str, changed_ranges: RangeMap) -> bool:
+    ranges = changed_ranges.get(file_path, [])
+    if not ranges:
+        return False
+    node_range = _node_range(node)
+    return any(_ranges_overlap(node_range, changed_range) for changed_range in ranges)
+
+
+def _filter_cfg_diff_to_changed_ranges(cfg_diff: Dict[str, Any], changed_ranges: RangeMap) -> Dict[str, Any]:
+    filtered = dict(cfg_diff)
+    filtered["nodes_added"] = [
+        item
+        for item in cfg_diff.get("nodes_added", [])
+        if _node_overlaps_changed_ranges(item.get("node", {}), str(item.get("file", "")), changed_ranges)
+    ]
+    filtered["nodes_changed"] = [
+        item
+        for item in cfg_diff.get("nodes_changed", [])
+        if _node_overlaps_changed_ranges(item.get("after", {}), str(item.get("file", "")), changed_ranges)
+    ]
+    return filtered
+
+
 def get_candidate_code_edges(cfg_after: Dict[str, Any], candidate_nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     candidate_ids = {str(node.get("node_id", "")) for node in candidate_nodes if node.get("node_id")}
     if not candidate_ids:
@@ -249,6 +293,64 @@ def touched_files_from_patch(patch_text: str) -> List[str]:
     return sorted(files)
 
 
+_HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))?")
+
+
+def _parse_changed_ranges_from_diff(diff_text: str) -> RangeMap:
+    ranges: RangeMap = {}
+    current_file = ""
+    new_line = 0
+    current_start: Optional[int] = None
+    current_end = 0
+
+    def flush_run() -> None:
+        nonlocal current_start, current_end
+        if current_file and current_start is not None:
+            ranges.setdefault(current_file, []).append((current_start, current_end))
+        current_start = None
+        current_end = 0
+
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            flush_run()
+            raw = line[4:].split("\t", 1)[0].strip()
+            current_file = raw[2:] if raw.startswith("b/") else raw
+            if current_file == "/dev/null":
+                current_file = ""
+            continue
+        if line.startswith("@@"):
+            flush_run()
+            match = _HUNK_RE.match(line)
+            if not match:
+                new_line = 0
+                continue
+            new_line = int(match.group(3))
+            continue
+        if not current_file or not line:
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            if current_start is None:
+                current_start = new_line
+            current_end = new_line
+            new_line += 1
+            continue
+        flush_run()
+        if line.startswith(" ") or line.startswith("-"):
+            if not line.startswith("-"):
+                new_line += 1
+
+    flush_run()
+    return ranges
+
+
+def _normalized_changed_ranges(patched_repo: Path, touched: List[str]) -> Tuple[RangeMap, str]:
+    command = ["git", "diff", "--unified=0", "--", *touched]
+    result = run_command(command, cwd=patched_repo)
+    if result.returncode != 0:
+        return {}, (result.stderr or result.stdout or "").strip()
+    return _parse_changed_ranges_from_diff(result.stdout or ""), ""
+
+
 def _patch_chunks(patch_text: str) -> List[Dict[str, Any]]:
     chunks: List[Dict[str, Any]] = []
     current_file = ""
@@ -291,42 +393,93 @@ def _patch_chunks(patch_text: str) -> List[Dict[str, Any]]:
     return chunks
 
 
+def _fallback_runs_from_chunk(chunk: Dict[str, Any]) -> List[Dict[str, Any]]:
+    hunk_header = str(chunk.get("hunk_header", ""))
+    match = _HUNK_RE.match(hunk_header)
+    if not match:
+        return []
+    new_line = int(match.group(3))
+    current_start: Optional[int] = None
+    current_lines: List[str] = []
+    runs: List[Dict[str, Any]] = []
+
+    def flush_run() -> None:
+        nonlocal current_start, current_lines
+        if current_start is None:
+            return
+        runs.append(
+            {
+                "start_line": current_start,
+                "end_line": current_start + max(0, len(current_lines) - 1),
+                "added_lines": list(current_lines),
+            }
+        )
+        current_start = None
+        current_lines = []
+
+    for line in str(chunk.get("raw_hunk", "")).splitlines()[1:]:
+        if line.startswith("+") and not line.startswith("+++"):
+            if current_start is None:
+                current_start = new_line
+            current_lines.append(line[1:])
+            new_line += 1
+            continue
+        flush_run()
+        if line.startswith(" ") or line == r"\ No newline at end of file":
+            if line.startswith(" "):
+                new_line += 1
+            continue
+        if line.startswith("-") and not line.startswith("---"):
+            continue
+
+    flush_run()
+    return runs
+
+
 def create_nodes_from_patch_hunks(patch_text: str) -> List[Dict[str, Any]]:
     nodes: List[Dict[str, Any]] = []
+    run_id = 0
     for chunk in _patch_chunks(patch_text):
         file_path = str(chunk.get("file_path", ""))
         if not file_path.endswith(".py"):
             continue
-        added_lines = chunk.get("added_lines", [])
-        snippet = "\n".join(added_lines)
         hunk_header = str(chunk.get("hunk_header", ""))
         func_name = "unknown"
         if "def " in hunk_header:
             func_name = hunk_header.split("def ", 1)[-1].split("(", 1)[0].strip() or "unknown"
 
-        start_line = 0
-        if hunk_header:
-            import re
-
-            match = re.search(r"\+(\d+)", hunk_header)
-            if match:
-                start_line = int(match.group(1))
-
-        node_id = f"{file_path}::{func_name}::{chunk.get('chunk_id', '')}"
-        nodes.append(
-            {
-                "node_id": node_id,
-                "change_type": "added",
-                "file": file_path,
-                "function": func_name,
-                "start_line": start_line,
-                "end_line": start_line + len(added_lines),
-                "node_type": "basic_block",
-                "code_snippet": snippet,
-                "contains_calls": [],
-            }
-        )
+        for run in _fallback_runs_from_chunk(chunk):
+            added_lines = run.get("added_lines", [])
+            snippet = "\n".join(added_lines)
+            if not snippet.strip():
+                continue
+            run_id += 1
+            node_id = f"{file_path}::{func_name}::{chunk.get('chunk_id', '')}_run_{run_id}"
+            nodes.append(
+                {
+                    "node_id": node_id,
+                    "change_type": "added",
+                    "file": file_path,
+                    "function": func_name,
+                    "start_line": run.get("start_line", 0),
+                    "end_line": run.get("end_line", run.get("start_line", 0)),
+                    "node_type": "basic_block",
+                    "code_snippet": snippet,
+                    "contains_calls": [],
+                }
+            )
     return nodes
+
+
+def _empty_cfg_diff(summary: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    return {
+        "nodes_added": [],
+        "nodes_removed": [],
+        "nodes_changed": [],
+        "edges_added": [],
+        "edges_removed": [],
+        "summary": summary or {},
+    }
 
 
 def compute_cfg_diff_for_patch(
@@ -347,21 +500,14 @@ def compute_cfg_diff_for_patch(
         "fallback_reason": "",
         "apply_success": None,
         "apply_message": "",
+        "hunk_count": len(_patch_chunks(patch_text)),
+        "changed_range_count": 0,
+        "raw_candidate_node_count": 0,
+        "filtered_candidate_node_count": 0,
     }
 
     if not touched:
-        return (
-            {
-                "nodes_added": [],
-                "nodes_removed": [],
-                "nodes_changed": [],
-                "edges_added": [],
-                "edges_removed": [],
-                "summary": {},
-            },
-            [],
-            diagnostics,
-        )
+        return (_empty_cfg_diff(), [], diagnostics)
 
     if base_repo and base_repo.exists():
         work_dir = Path(tempfile.mkdtemp(prefix="cfg_grounding_"))
@@ -375,11 +521,32 @@ def compute_cfg_diff_for_patch(
                 cfg_before = build_cfg_for_files(touched, base_path=str(base_repo))
                 cfg_after = build_cfg_for_files(touched, base_path=str(patched_repo))
                 cfg_diff = diff_cfg(cfg_before, cfg_after)
-                candidates = get_diff_candidate_nodes(cfg_diff)
+                raw_candidates = get_diff_candidate_nodes(cfg_diff)
+                diagnostics["raw_candidate_node_count"] = len(raw_candidates)
+                changed_ranges, range_error = _normalized_changed_ranges(patched_repo, touched)
+                diagnostics["changed_ranges"] = {
+                    file_path: [[start, end] for start, end in ranges]
+                    for file_path, ranges in changed_ranges.items()
+                }
+                diagnostics["changed_range_count"] = sum(len(ranges) for ranges in changed_ranges.values())
+                if range_error:
+                    diagnostics["changed_range_error"] = range_error
+                filtered_cfg_diff = _filter_cfg_diff_to_changed_ranges(cfg_diff, changed_ranges)
+                candidates = get_diff_candidate_nodes(filtered_cfg_diff)
+                diagnostics["filtered_candidate_node_count"] = len(candidates)
+                filtered_cfg_diff.setdefault("summary", {})
+                filtered_cfg_diff["summary"].update(
+                    {
+                        "raw_candidate_node_count": diagnostics["raw_candidate_node_count"],
+                        "filtered_candidate_node_count": diagnostics["filtered_candidate_node_count"],
+                        "hunk_count": diagnostics["hunk_count"],
+                        "changed_range_count": diagnostics["changed_range_count"],
+                    }
+                )
                 candidate_edges = get_candidate_code_edges(cfg_after, candidates)
-                cfg_diff["candidate_edges"] = candidate_edges
+                filtered_cfg_diff["candidate_edges"] = candidate_edges
                 diagnostics["candidate_code_edges"] = candidate_edges
-                return cfg_diff, candidates, diagnostics
+                return filtered_cfg_diff, candidates, diagnostics
             diagnostics["fallback_reason"] = f"patch_apply_failed: {apply_msg}"
         except Exception as exc:
             diagnostics["fallback_reason"] = f"cfg_diff_exception: {type(exc).__name__}: {exc}"
@@ -389,21 +556,18 @@ def compute_cfg_diff_for_patch(
         diagnostics["fallback_reason"] = "missing_base_repo"
 
     if not allow_hunk_fallback:
-        return (
-            {
-                "nodes_added": [],
-                "nodes_removed": [],
-                "nodes_changed": [],
-                "edges_added": [],
-                "edges_removed": [],
-                "summary": {},
-            },
-            [],
-            diagnostics,
-        )
+        return (_empty_cfg_diff(), [], diagnostics)
 
     candidates = create_nodes_from_patch_hunks(patch_text)
     diagnostics["fallback_used"] = True
+    diagnostics["raw_candidate_node_count"] = len(candidates)
+    diagnostics["filtered_candidate_node_count"] = len(candidates)
+    fallback_ranges = _parse_changed_ranges_from_diff(patch_text)
+    diagnostics["changed_ranges"] = {
+        file_path: [[start, end] for start, end in ranges]
+        for file_path, ranges in fallback_ranges.items()
+    }
+    diagnostics["changed_range_count"] = sum(len(ranges) for ranges in fallback_ranges.values())
     cfg_diff = {
         "nodes_added": [{"file": n.get("file", ""), "function": n.get("function", ""), "node": n} for n in candidates],
         "nodes_removed": [],
@@ -414,6 +578,10 @@ def compute_cfg_diff_for_patch(
         "summary": {
             "files_compared": len(touched),
             "functions_compared": 0,
+            "raw_candidate_node_count": diagnostics["raw_candidate_node_count"],
+            "filtered_candidate_node_count": diagnostics["filtered_candidate_node_count"],
+            "hunk_count": diagnostics["hunk_count"],
+            "changed_range_count": diagnostics["changed_range_count"],
         },
         "candidate_nodes": candidates,
     }

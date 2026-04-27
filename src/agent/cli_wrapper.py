@@ -207,6 +207,18 @@ def _write_invocation_logs(
     }
 
 
+def _git_diff(repo_path: Path) -> str:
+    result = run_command(["git", "diff", "--binary", "HEAD", "--"], cwd=repo_path)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _reset_generated_git_checkout(repo_path: Path) -> None:
+    if not (repo_path / ".git").exists():
+        return
+    run_command(["git", "reset", "--hard", "HEAD"], cwd=repo_path)
+    run_command(["git", "clean", "-fd"], cwd=repo_path)
+
+
 def run_cli_agent(
     *,
     agent_name: str,
@@ -292,12 +304,45 @@ def run_cli_agent(
             command[0] = resolved_executable
     cwd = Path(str(repo_code.get("path", ".")))
     timeout_sec = int(config.get("timeout_sec", 120))
+    output_mode = str(config.get("output_mode", "stdout"))
+    if output_mode == "git_diff":
+        _reset_generated_git_checkout(cwd)
+
     # Gemini CLI reads GEMINI_API_KEY, but this harness commonly uses GOOGLE_API_KEY.
     # Forward it automatically for command-driven Gemini agents when needed.
     env_override: Dict[str, str] = {}
     if executable in {"gemini", "gemini-cli"}:
         if not os.environ.get("GEMINI_API_KEY") and os.environ.get("GOOGLE_API_KEY"):
             env_override["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
+    if executable == "openhands":
+        llm_model = os.environ.get("LLM_MODEL") or str(config.get("llm_model", "")).strip()
+        llm_api_key = (
+            os.environ.get("LLM_API_KEY")
+            or os.environ.get("OPENROUTER_API_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or str(config.get("llm_api_key", "")).strip()
+        )
+        llm_base_url = os.environ.get("LLM_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+        if llm_model:
+            env_override["LLM_MODEL"] = llm_model
+        if llm_api_key:
+            env_override["LLM_API_KEY"] = llm_api_key
+        if llm_base_url:
+            env_override["LLM_BASE_URL"] = llm_base_url
+        # OpenHands initializes a tmux environment. Very long inherited PATH
+        # values can make tmux fail with "command too long", so pass a compact
+        # path that still includes this venv, user-local tools, and system bins.
+        compact_path = [
+            str(Path(os.environ["VIRTUAL_ENV"]) / "bin") if os.environ.get("VIRTUAL_ENV") else "",
+            str(Path.home() / ".local" / "bin"),
+            "/usr/local/sbin",
+            "/usr/local/bin",
+            "/usr/sbin",
+            "/usr/bin",
+            "/sbin",
+            "/bin",
+        ]
+        env_override["PATH"] = os.pathsep.join(part for part in compact_path if part)
 
     result = run_command(
         command,
@@ -305,11 +350,15 @@ def run_cli_agent(
         env=env_override or None,
         timeout_sec=timeout_sec,
     )
+    git_diff_text = _git_diff(cwd) if output_mode == "git_diff" else ""
     log_paths = _write_invocation_logs(artifact_dir, command, agent_prompt, result.stdout, result.stderr)
 
-    output_mode = str(config.get("output_mode", "stdout"))
     output_parser = str(config.get("output_parser", "unified_diff_auto")).lower()
-    if output_mode == "file":
+    if output_mode == "git_diff":
+        diff_text = git_diff_text
+        if bool(config.get("cleanup_git_after_run", True)):
+            _reset_generated_git_checkout(cwd)
+    elif output_mode == "file":
         output_file = str(config.get("output_file", "patch.diff"))
         patch_path = cwd / output_file
         file_text = patch_path.read_text(encoding="utf-8") if patch_path.exists() else ""
