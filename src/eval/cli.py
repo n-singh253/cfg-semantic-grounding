@@ -17,7 +17,7 @@ def parse_args(argv: Optional[List[str]] = None):
     sub = parser.add_subparsers(dest="command", required=True)
 
     one = sub.add_parser("run_one", help="Run a single experiment.")
-    one.add_argument("--dataset", required=True, choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus"])
+    one.add_argument("--dataset", required=True, choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus", "featurebench", "featurebench_lite", "featurebench_full", "polybench", "polybench_verified", "polybench_500", "polybench_full"])
     one.add_argument("--split", default="test")
     one.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids")
     one.add_argument("--limit", type=int, default=None)
@@ -45,7 +45,7 @@ def parse_args(argv: Optional[List[str]] = None):
     )
 
     attack = sub.add_parser("run_attack", help="Run attack phase only (generate adversarial prompts and patches).")
-    attack.add_argument("--dataset", required=True, choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus"])
+    attack.add_argument("--dataset", required=True, choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus", "featurebench", "featurebench_lite", "featurebench_full", "polybench", "polybench_verified", "polybench_500", "polybench_full"])
     attack.add_argument("--split", default="test")
     attack.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids")
     attack.add_argument("--limit", type=int, default=None)

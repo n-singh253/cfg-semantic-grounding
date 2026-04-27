@@ -35,6 +35,25 @@ from src.eval.report import load_jsonl_rows, write_defense_summary, write_summar
 SCHEMA_VERSION = "v1"
 
 
+def _cleanup_repo(
+    repo_path_str: str,
+    all_instances: List[Any],
+    completed: set[str],
+) -> None:
+    """Delete a cloned repo once all its instances are done (saves disk during long runs)."""
+    import shutil
+    import sys
+
+    rp = Path(repo_path_str)
+    if not rp.exists():
+        return
+    # Check if any remaining instances still need this repo.
+    for inst in all_instances:
+        if inst.instance_id not in completed and inst.repo_snapshot.path == repo_path_str:
+            return  # Still needed.
+    print(f"  [cleanup] removing {rp} (all instances done)", file=sys.stderr)
+    shutil.rmtree(rp, ignore_errors=True)
+    
 def _log(event: str, **kwargs: Any) -> None:
     suffix = ""
     if kwargs:
@@ -905,10 +924,19 @@ def run_one(
     store.write_json("integration_spec.json", integration_spec)
 
     all_rows: List[Dict[str, Any]] = list(existing_rows)
+    _prev_repo_path: Optional[str] = None
     for instance in data_result.instances:
         if instance.instance_id in completed_instance_ids:
             continue
 
+        # Cleanup previous repo if we moved to a different one (save disk).
+        cur_repo_path = instance.repo_snapshot.path
+        if _prev_repo_path and _prev_repo_path != cur_repo_path:
+            _cleanup_repo(_prev_repo_path, data_result.instances, completed_instance_ids)
+        _prev_repo_path = cur_repo_path
+
+        t0 = time.time()
+        start_ts = utc_now()
         repo_code = {
             "instance_id": instance.instance_id,
             "dataset": instance.dataset,
@@ -918,6 +946,7 @@ def run_one(
             "path": instance.repo_snapshot.path,
             "run_root": str(out_dir),
         }
+        
         repo_path = Path(instance.repo_snapshot.path)
         repo_path.mkdir(parents=True, exist_ok=True)
         repo_backup = _make_nongit_backup(repo_path)
@@ -1098,6 +1127,10 @@ def run_one(
                 repo_backup[0].cleanup()
         completed_instance_ids.add(instance.instance_id)
 
+    # Cleanup last repo if applicable.
+    if _prev_repo_path:
+        _cleanup_repo(_prev_repo_path, data_result.instances, completed_instance_ids)
+        
     for prompt_type in ("ori", "adv"):
         summary = write_defense_summary(all_rows, prompt_type, out_dir)
         _log(
@@ -1107,6 +1140,7 @@ def run_one(
             accepted=summary["accepted_instances"],
             rejected=summary["rejected_instances"],
         )
+        
     return all_rows
 
 

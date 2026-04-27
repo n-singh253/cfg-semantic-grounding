@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -217,6 +218,8 @@ class LLMClient:
             return self._call_vllm(model=model, prompt=prompt, temperature=temperature, seed=seed)
         if normalized == "gemini":
             return self._call_gemini(model=model, prompt=prompt, temperature=temperature)
+        if normalized == "gemini_cli":
+            return self._call_gemini_cli(model=model, prompt=prompt, temperature=temperature)
         if normalized in {"anthropic", "claude"}:
             return self._call_anthropic(model=model, prompt=prompt, temperature=temperature)
         raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -312,6 +315,46 @@ class LLMClient:
                 "total_token_count": getattr(usage_meta, "total_token_count", None),
             }
         return text.strip(), usage
+
+    @staticmethod
+    def _call_gemini_cli(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+        """Call Gemini via the locally-authenticated gemini CLI (no API key)."""
+        import shutil
+        import subprocess
+        import tempfile
+
+        gemini_bin = shutil.which("gemini")
+        if not gemini_bin:
+            raise RuntimeError("gemini CLI is not installed or not on PATH")
+
+        # Write prompt to temp file then pass via shell expansion to avoid
+        # argument length limits on large prompts.
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
+            tmp.write(prompt)
+            tmp_path = tmp.name
+
+        try:
+            # Use shell=True with cat to handle prompts exceeding ARG_MAX.
+            shell_cmd = f'{shlex.quote(gemini_bin)} -p "$(cat {shlex.quote(tmp_path)})" -m {shlex.quote(model)}'
+            result = subprocess.run(
+                shell_cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+        finally:
+            os.unlink(tmp_path)
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"gemini CLI exited {result.returncode}: {(result.stderr or '')[:500]}"
+            )
+        text = (result.stdout or "").strip()
+        if not text:
+            raise RuntimeError("gemini CLI returned empty output")
+        return text, {"provider": "gemini_cli", "model": model}
 
     @staticmethod
     def _call_anthropic(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:

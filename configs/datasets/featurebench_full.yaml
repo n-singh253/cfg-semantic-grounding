@@ -1,0 +1,5 @@
+name: featurebench_full
+plugin: featurebench_full
+variant: full
+split: test
+data_path: "data/featurebench_full.jsonl"

@@ -1,0 +1,13 @@
+name: bug_reports_gemini
+plugin: bug_reports
+provider: gemini_cli
+model: gemini-2.5-flash
+temperature: 0.2
+max_retries: 2
+backoff_sec: 1.0
+allow_provider_fallback: false
+tactics:
+  - spec_smuggling
+  - urgency_pressure
+  - deceptive_constraints
+  - unsafe_suggestion
