@@ -1,39 +1,20 @@
-"""SWE-Bench dataset adapters (Lite/Pro/Plus)."""
+"""FeatureBench dataset adapter (LiberCoders/FeatureBench)."""
 
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from src.common.types import DatasetLoadResult, ProblemInstance, RepoSnapshot, TestSpec
 from src.dataset.registry import register_dataset
+from src.dataset.swebench import _lazy_clone
+
+REPOS_ROOT = Path.home() / "featurebench_repos"
 
 
-def _lazy_clone(repo_id: str, dest: Path) -> bool:
-    """Clone a repo on-demand if it doesn't already exist. Returns True on success."""
-    if (dest / ".git").exists():
-        return True
-    url = f"https://github.com/{repo_id}.git"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    print(f"  [lazy-clone] {repo_id} -> {dest}", file=sys.stderr)
-    try:
-        subprocess.run(
-            ["git", "clone", "--quiet", url, str(dest)],
-            check=True,
-            timeout=600,
-        )
-        return True
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        print(f"  [lazy-clone] FAILED {repo_id}: {e}", file=sys.stderr)
-        return False
-
-
-class SWEBenchDataset:
-    name = "swebench"
-    variant = "lite"
+class FeatureBenchDataset:
+    name = "featurebench"
 
     def __init__(self, variant: str = "lite") -> None:
         self.variant = variant
@@ -53,8 +34,8 @@ class SWEBenchDataset:
                 instances=[],
                 errors=[],
                 warnings=[
-                    f"No local data_path configured for SWE-Bench {variant}. "
-                    "Provide configs/datasets/*.yaml:data_path for real loading."
+                    f"No local data_path configured for FeatureBench {variant}. "
+                    "Run: python scripts/setup_featurebench.py"
                 ],
             )
         source = Path(str(data_path))
@@ -63,55 +44,50 @@ class SWEBenchDataset:
         if not source.exists():
             return DatasetLoadResult(
                 instances=[],
-                errors=[f"SWE-Bench source not found: {source}"],
+                errors=[f"FeatureBench source not found: {source}"],
                 warnings=[],
             )
 
         rows: List[Dict[str, Any]] = []
-        if source.suffix.lower() == ".jsonl":
-            for line in source.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
+        for line in source.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
                 rows.append(json.loads(line))
-        else:
-            payload = json.loads(source.read_text(encoding="utf-8"))
-            if isinstance(payload, dict):
-                rows = list(payload.get("rows", []))
-            elif isinstance(payload, list):
-                rows = payload
 
         wanted_ids = set(instance_ids or [])
         instances: List[ProblemInstance] = []
         errors: List[str] = []
         for idx, row in enumerate(rows):
-            iid = str(row.get("instance_id") or row.get("id") or f"row-{idx}")
+            iid = str(row.get("instance_id") or f"row-{idx}")
             if wanted_ids and iid not in wanted_ids:
                 continue
-            repo_path = str(row.get("repo_path") or "")
             repo_id = str(row.get("repo_id") or row.get("repo") or "")
+            repo_path = str(row.get("repo_path") or "")
             if not repo_path:
                 errors.append(f"{iid}: missing repo_path")
                 continue
 
-            # Lazy-clone: if repo_path doesn't exist and we have a repo_id, clone it.
             rp = Path(repo_path)
             if not (rp / ".git").exists() and repo_id:
                 if not _lazy_clone(repo_id, rp):
                     errors.append(f"{iid}: failed to clone {repo_id}")
                     continue
 
-            test_cmd = row.get("test_command") or ["python3", "-m", "pytest", "-q"]
+            test_cmd = row.get("test_command") or ["python3", "-m", "pytest", "-xvs"]
             if isinstance(test_cmd, str):
                 test_cmd = test_cmd.split()
+            fail_to_pass = row.get("FAIL_TO_PASS") or []
+            if isinstance(fail_to_pass, list) and fail_to_pass:
+                test_cmd = ["python3", "-m", "pytest", "-xvs"] + fail_to_pass
+
             instances.append(
                 ProblemInstance(
-                    dataset=f"swebench_{variant}",
+                    dataset=f"featurebench_{variant}",
                     split=split,
                     instance_id=iid,
-                    prompt=str(row.get("problem_statement") or row.get("prompt") or ""),
+                    prompt=str(row.get("problem_statement") or ""),
                     repo_snapshot=RepoSnapshot(
-                        repo_id=repo_id or iid.split("::")[0],
+                        repo_id=repo_id,
                         path=repo_path,
                         base_commit=str(row.get("base_commit") or "unknown"),
                     ),
@@ -119,6 +95,7 @@ class SWEBenchDataset:
                     metadata={
                         "variant": variant,
                         "source_path": str(source),
+                        "image_name": row.get("image_name", ""),
                     },
                 )
             )
@@ -128,24 +105,19 @@ class SWEBenchDataset:
         return DatasetLoadResult(instances=instances, errors=errors, warnings=[])
 
 
-@register_dataset("swebench")
-class _SWEBenchDefault(SWEBenchDataset):
-    """Default SWE-Bench adapter alias."""
-
-
-@register_dataset("swebench_lite")
-class _SWEBenchLite(SWEBenchDataset):
+@register_dataset("featurebench")
+class _FeatureBenchDefault(FeatureBenchDataset):
     def __init__(self) -> None:
         super().__init__(variant="lite")
 
 
-@register_dataset("swebench_pro")
-class _SWEBenchPro(SWEBenchDataset):
+@register_dataset("featurebench_lite")
+class _FeatureBenchLite(FeatureBenchDataset):
     def __init__(self) -> None:
-        super().__init__(variant="pro")
+        super().__init__(variant="lite")
 
 
-@register_dataset("swebench_plus")
-class _SWEBenchPlus(SWEBenchDataset):
+@register_dataset("featurebench_full")
+class _FeatureBenchFull(FeatureBenchDataset):
     def __init__(self) -> None:
-        super().__init__(variant="plus")
+        super().__init__(variant="full")

@@ -11,14 +11,11 @@ plugin: sequence_classifiers
 
 ###### DATA PREPARATION ######
 data_preparation:
-  # Path to benign attack results (e.g., attack_name: none)
-  benign_results_path: out/{benign_run_name}/results.jsonl
-  
-  # Path to malicious attack results (e.g., attack_name: swexploit)
-  malicious_results_path: out/{malicious_run_name}/results.jsonl
+  # Path to attack_results.jsonl from run_attack
+  attack_results_path: outputs/attacks/{run_name}/attack_results.jsonl
   
   # Output directory for prepared train/test splits
-  output_dir: data/prepared/swexploit_vs_none
+  output_dir: data/prepared/sequence_classifiers
   
   # Split strategy options:
   #   - "stratified_instance": Split by instance_id, preserving class balance

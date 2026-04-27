@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import time
 from itertools import product
 from pathlib import Path
@@ -22,7 +24,7 @@ from src.common.hashing import sha256_text
 from src.common.llm import LLMClient
 from src.common.reports import build_dataset_report, build_integration_spec, utc_now
 from src.common.subprocess import command_exists, run_command
-from src.common.types import Patch
+from src.common.types import Patch, TestSpec
 from src.dataset.registry import get_dataset
 from src.eval.attack_finalize import finalize_attack_dataset, require_finalized_attack_rows
 from src.eval.patch_eval import apply_patch_with_details, run_repo_tests, run_static_checks
@@ -30,6 +32,40 @@ from src.eval.report import load_jsonl_rows, write_summary_csv
 
 
 SCHEMA_VERSION = "v1"
+
+
+def _is_git_repo(repo_path: Path) -> bool:
+    if not command_exists("git") or not repo_path.exists():
+        return False
+    result = run_command(["git", "rev-parse", "--is-inside-work-tree"], cwd=repo_path)
+    return result.returncode == 0 and "true" in (result.stdout or "").lower()
+
+
+def _reset_git_repo(repo_path: Path, base_commit: str = "") -> bool:
+    target = base_commit.strip() or "HEAD"
+    reset_result = run_command(["git", "reset", "--hard", target], cwd=repo_path)
+    clean_result = run_command(["git", "clean", "-fd"], cwd=repo_path)
+    return reset_result.returncode == 0 and clean_result.returncode == 0
+
+
+def _make_nongit_backup(repo_path: Path) -> tuple[tempfile.TemporaryDirectory[str], Path] | None:
+    if _is_git_repo(repo_path) or not repo_path.exists():
+        return None
+    temp_dir = tempfile.TemporaryDirectory(prefix="cfg-runner-repo-")
+    backup_path = Path(temp_dir.name) / "repo"
+    shutil.copytree(repo_path, backup_path)
+    return temp_dir, backup_path
+
+
+def _restore_repo(repo_path: Path, base_commit: str = "", backup: Path | None = None) -> None:
+    if _is_git_repo(repo_path):
+        _reset_git_repo(repo_path, base_commit)
+        return
+    if backup is None:
+        return
+    if repo_path.exists():
+        shutil.rmtree(repo_path)
+    shutil.copytree(backup, repo_path)
 
 
 def _load_configs(
@@ -413,25 +449,34 @@ def run_attack(
         
         repo_path = Path(instance.repo_snapshot.path)
         repo_path.mkdir(parents=True, exist_ok=True)
+        repo_backup = _make_nongit_backup(repo_path)
+        backup_path = repo_backup[1] if repo_backup else None
         
         # Generate prompts and patches
         ori_prompt = instance.prompt
         ori_prompt_hash = sha256_text(ori_prompt)
-        ori_patch = agent_obj.agent(
-            _repo_code_with_agent_tag(repo_code, "ori_attempt_00"),
-            ori_prompt,
-            instance.tests,
-        )
-        
-        adv_prompt = attack_obj.attack(repo_code, ori_prompt, instance.tests)
-        adv_prompt_hash = sha256_text(adv_prompt)
-        attack_meta_early = dict(getattr(attack_obj, "last_metadata", {}))
-        
-        adv_patch = agent_obj.agent(
-            _repo_code_with_agent_tag(repo_code, "adv_attempt_00"),
-            adv_prompt,
-            instance.tests,
-        )
+        try:
+            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
+            ori_patch = agent_obj.agent(
+                _repo_code_with_agent_tag(repo_code, "ori_attempt_00"),
+                ori_prompt,
+                instance.tests,
+            )
+
+            adv_prompt = attack_obj.attack(repo_code, ori_prompt, instance.tests)
+            adv_prompt_hash = sha256_text(adv_prompt)
+            attack_meta_early = dict(getattr(attack_obj, "last_metadata", {}))
+
+            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
+            adv_patch = agent_obj.agent(
+                _repo_code_with_agent_tag(repo_code, "adv_attempt_00"),
+                adv_prompt,
+                instance.tests,
+            )
+            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
+        finally:
+            if repo_backup:
+                repo_backup[0].cleanup()
         
         # Handle prebuilt adversarial patches
         prebuilt_adv_patch = attack_meta_early.get("prebuilt_adv_patch")
@@ -642,7 +687,6 @@ def run_defense(
         if adv_patch_path.exists():
             adv_patch_diff = adv_patch_path.read_text(encoding="utf-8").strip()
 
-        from src.common.types import TestSpec
         test_specs = [
             TestSpec(
                 name=t.get("name", "default"),

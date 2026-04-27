@@ -21,7 +21,11 @@ from src.common.types import Patch
 def _agent_artifact_dir(agent_name: str, repo_code: Dict[str, Any]) -> Path:
     run_root = repo_code.get("run_root")
     instance_id = str(repo_code.get("instance_id", "unknown"))
-    artifact_tag = str(repo_code.get("agent_artifact_tag", "") or "").strip()
+    artifact_tag = str(
+        repo_code.get("agent_artifact_tag", "")
+        or repo_code.get("pass_label", "")
+        or ""
+    ).strip()
     if run_root:
         base = Path(str(run_root)) / "artifacts" / "agents" / instance_id / agent_name
         return base / artifact_tag if artifact_tag else base

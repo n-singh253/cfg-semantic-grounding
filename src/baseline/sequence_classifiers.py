@@ -58,6 +58,13 @@ from src.common.llm import LLMClient
 from src.common.types import DefenseReturn
 
 
+def log(event: str, **kwargs: Any) -> None:
+    suffix = ""
+    if kwargs:
+        suffix = " | " + " ".join(f"{key}={value}" for key, value in sorted(kwargs.items()))
+    print(f"[sequence-classifiers] {event}{suffix}", flush=True)
+
+
 ###### DATA LOADING AND DATASET ######
 
 class PromptDataset(Dataset):
@@ -230,18 +237,6 @@ def train_model(
 ) -> None:
     """
     Train a sequence classification model for prompt safety detection.
-    
-    Args:
-        train_data_path: Path to train.jsonl
-        test_data_path: Path to test.jsonl
-        model_name: HuggingFace model name (e.g., 'bert-base-uncased')
-        output_dir: Directory to save trained model
-        max_length: Maximum sequence length
-        epochs: Number of training epochs
-        batch_size: Batch size for training
-        learning_rate: Learning rate
-        warmup_ratio: Ratio of warmup steps
-        random_seed: Random seed for reproducibility
     """
     if not ML_DEPS_AVAILABLE:
         raise ImportError(
@@ -249,28 +244,42 @@ def train_model(
             f"Install with: pip install torch transformers scikit-learn. "
             f"Original error: {_IMPORT_ERROR}"
         )
-    
+
     torch.manual_seed(random_seed)
     np.random.seed(random_seed)
-    
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     train_instances = load_jsonl(train_data_path)
     test_instances = load_jsonl(test_data_path)
-    
+
+    # Validate labels explicitly
+    for split_name, instances in [("train", train_instances), ("test", test_instances)]:
+        for i, inst in enumerate(instances):
+            if "label" not in inst:
+                raise ValueError(f"{split_name} example {i} is missing 'label'")
+            if inst["label"] not in (0, 1):
+                raise ValueError(
+                    f"{split_name} example {i} has invalid label {inst['label']}; "
+                    f"expected 0=benign or 1=malicious"
+                )
+
     train_labels = [inst["label"] for inst in train_instances]
     test_labels = [inst["label"] for inst in test_instances]
-    
+
+    log("data", split="train", rows=len(train_instances), benign=sum(l == 0 for l in train_labels), malicious=sum(l == 1 for l in train_labels))
+    log("data", split="test", rows=len(test_instances), benign=sum(l == 0 for l in test_labels), malicious=sum(l == 1 for l in test_labels))
+
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name,
         num_labels=2,
     )
     model.to(device)
-    
+
     train_dataset = PromptDataset(train_instances, tokenizer, max_length)
     test_dataset = PromptDataset(test_instances, tokenizer, max_length)
-    
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -281,24 +290,36 @@ def train_model(
         batch_size=batch_size,
         shuffle=False,
     )
-    
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
-    
+
     total_steps = len(train_dataloader) * epochs
-    warmup_steps = int(total_steps * warmup_ratio)
-    
+    warmup_steps = int(total_steps * warmup_ratio) if total_steps > 0 else 0
+
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=warmup_steps,
-        num_training_steps=total_steps,
+        num_training_steps=max(total_steps, 1),
     )
-    
-    best_f1 = 0
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pretrain_metrics = evaluate(model, test_dataloader, device)
+    log(
+        "pretrain",
+        accuracy=f"{pretrain_metrics['accuracy']:.4f}",
+        precision=f"{pretrain_metrics['precision']:.4f}",
+        recall=f"{pretrain_metrics['recall']:.4f}",
+        f1=f"{pretrain_metrics['f1']:.4f}",
+    )
+
+    best_f1 = float("-inf")
+    best_model_saved = False
     training_history = []
-    
+
     for epoch in range(1, epochs + 1):
         start_time = time.time()
-        
+
         train_loss = train_epoch(
             model,
             train_dataloader,
@@ -307,11 +328,20 @@ def train_model(
             device,
             epoch,
         )
-        
+
         test_metrics = evaluate(model, test_dataloader, device)
-        
+        log(
+            "epoch",
+            epoch=epoch,
+            train_loss=f"{train_loss:.4f}",
+            accuracy=f"{test_metrics['accuracy']:.4f}",
+            precision=f"{test_metrics['precision']:.4f}",
+            recall=f"{test_metrics['recall']:.4f}",
+            f1=f"{test_metrics['f1']:.4f}",
+        )
+
         epoch_time = time.time() - start_time
-        
+
         training_history.append({
             "epoch": epoch,
             "train_loss": train_loss,
@@ -322,19 +352,29 @@ def train_model(
             "test_f1": test_metrics["f1"],
             "epoch_time": epoch_time,
         })
-        
+
         if test_metrics["f1"] > best_f1:
             best_f1 = test_metrics["f1"]
-            output_dir.mkdir(parents=True, exist_ok=True)
             model.save_pretrained(output_dir)
             tokenizer.save_pretrained(output_dir)
-    
-    best_model = AutoModelForSequenceClassification.from_pretrained(output_dir)
-    best_model.to(device)
-    
-    final_metrics = evaluate(best_model, test_dataloader, device)
-    
-    # Save metrics and training history
+            best_model_saved = True
+
+    if epochs == 0:
+        # No training happened; evaluate the in-memory initial model and do not load from disk.
+        final_model = model
+        final_metrics = pretrain_metrics
+        best_f1 = pretrain_metrics["f1"]
+    else:
+        if not best_model_saved:
+            raise RuntimeError(
+                f"No checkpoint was saved during this run. "
+                f"Refusing to load a possibly stale model from {output_dir}."
+            )
+
+        final_model = AutoModelForSequenceClassification.from_pretrained(output_dir)
+        final_model.to(device)
+        final_metrics = evaluate(final_model, test_dataloader, device)
+
     class_report = final_metrics["classification_report"]
     results = {
         "model_name": model_name,
@@ -342,6 +382,13 @@ def train_model(
         "epochs": epochs,
         "batch_size": batch_size,
         "learning_rate": learning_rate,
+        "pretrain_metrics": {
+            "accuracy": pretrain_metrics["accuracy"],
+            "precision": pretrain_metrics["precision"],
+            "recall": pretrain_metrics["recall"],
+            "f1": pretrain_metrics["f1"],
+            "confusion_matrix": pretrain_metrics["confusion_matrix"],
+        },
         "best_f1": best_f1,
         "final_metrics": {
             "accuracy": final_metrics["accuracy"],
@@ -353,9 +400,9 @@ def train_model(
         "classification_report": class_report,
         "training_history": training_history,
     }
-    
+
     results_path = output_dir / "training_results.json"
-    with open(results_path, 'w', encoding='utf-8') as f:
+    with open(results_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
 
 
@@ -562,7 +609,6 @@ def run_pipeline(config: Dict[str, Any]) -> None:
     Raises:
         ValueError: If required training config sections are missing
     """
-    # Validate training config
     required_sections = ["data_preparation", "training"]
     missing_sections = [sec for sec in required_sections if sec not in config]
     
@@ -572,20 +618,19 @@ def run_pipeline(config: Dict[str, Any]) -> None:
             "Use configs/baselines/sequence_classifiers_train.yaml as template."
         )
     
-    # Step 1: Data Preparation
     data_prep_config = config.get("data_preparation", {})
     
     metadata = prepare_training_data(
-        benign_results_path=data_prep_config["benign_results_path"],
-        malicious_results_path=data_prep_config["malicious_results_path"],
+        attack_results_path=data_prep_config["attack_results_path"],
         output_dir=data_prep_config["output_dir"],
         split_strategy=data_prep_config.get("split_strategy", "stratified_instance"),
         train_ratio=data_prep_config.get("train_ratio", 0.8),
         random_seed=data_prep_config.get("random_seed", 42),
         limit_per_class=data_prep_config.get("limit_per_class"),
     )
-    
-    # Step 2: Training
+
+    log("prepared-data", **metadata)
+
     training_config = config.get("training", {})
     prepared_data_dir = Path(data_prep_config["output_dir"])
     
@@ -601,7 +646,7 @@ def run_pipeline(config: Dict[str, Any]) -> None:
         warmup_ratio=training_config.get("warmup_ratio", 0.1),
         random_seed=training_config.get("random_seed", 42),
     )
-
+    log("training-done", output_dir=training_config["output_dir"])
 
 def main():
     """Main entry point for running the training pipeline."""
@@ -618,7 +663,6 @@ Examples:
   python -m src.eval.cli run_one --baseline sequence_classifiers --dataset toy --agent dummy --attack none
         """
     )
-    
     parser.add_argument(
         "--config",
         type=Path,
@@ -632,7 +676,7 @@ Examples:
         print(f"Error: Config file not found: {args.config}", file=sys.stderr)
         sys.exit(1)
     
-    with open(args.config, 'r') as f:
+    with open(args.config, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
     
     try:
@@ -643,8 +687,9 @@ Examples:
 
 
 # Register defense plugin for use in evaluation runs
-register_baseline("sequence_classifiers")(SequenceClassifierDefense)
-
+# Only register if not running as main (to avoid duplicate registration)
+if __name__ != "__main__":
+    register_baseline("sequence_classifiers")(SequenceClassifierDefense)
 
 if __name__ == "__main__":
     main()

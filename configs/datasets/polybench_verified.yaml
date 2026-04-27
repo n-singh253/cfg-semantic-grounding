@@ -1,0 +1,5 @@
+name: polybench_verified
+plugin: polybench_verified
+variant: verified
+split: test
+data_path: "data/polybench_verified.jsonl"

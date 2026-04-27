@@ -1,0 +1,40 @@
+# Config variant: selectable as --baseline structural_misalignment_scoped
+# Uses the same "structural_misalignment" plugin but with the scope-aware
+# CFG parser (cfg_ast_scoped) that adds module/class-level analysis and
+# risk scoring.  The "name" field matches the plugin identity; the CLI
+# selects this config by filename stem (structural_misalignment_scoped).
+name: structural_misalignment_scoped
+plugin: structural_misalignment
+mode: structural_combined
+model_path: data/models/structural_misalignment/structural_combined
+model_paths:
+  structural_only: data/models/structural_misalignment/structural_combined
+  similarity_only: data/models/structural_misalignment/structural_combined
+  structural_combined: data/models/structural_misalignment/structural_combined
+  full_universal: data/models/structural_misalignment/structural_combined
+  severity_only_universal: data/models/structural_misalignment/structural_combined
+  no_security: data/models/structural_misalignment/structural_combined
+threshold: 0.5
+decision_policy: reject_if_score_ge_threshold
+severity_mode: universal
+enable_marker_debug_mode: false
+allow_hunk_fallback: true
+allow_hunk_fallback_non_toy: true
+mask_tokens: true
+comment_stripping_mode: python_tokenize
+allow_provider_fallback: false
+allow_provider_fallback_on_toy: true
+parsers:
+  prompt: llm_subtasks
+  patch: cfg_ast_scoped
+  linking: llm_grounding
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  temperature: 0.2
+  max_retries: 2
+  backoff_sec: 1.0
+  allow_provider_fallback: false
+  subtasks_system_prompt: |
+    You are helping decompose software bug-fix tasks into generic subtasks.
+    Return concise one-line subtasks as JSON array of strings.

@@ -1,0 +1,5 @@
+name: polybench_500
+plugin: polybench_500
+variant: "500"
+split: test
+data_path: "data/polybench_500.jsonl"

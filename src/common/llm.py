@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -213,11 +214,46 @@ class LLMClient:
         normalized = provider.strip().lower()
         if normalized == "openai":
             return self._call_openai(model=model, prompt=prompt, temperature=temperature, seed=seed)
+        if normalized == "vllm":
+            return self._call_vllm(model=model, prompt=prompt, temperature=temperature, seed=seed)
         if normalized == "gemini":
             return self._call_gemini(model=model, prompt=prompt, temperature=temperature)
+        if normalized == "gemini_cli":
+            return self._call_gemini_cli(model=model, prompt=prompt, temperature=temperature)
         if normalized in {"anthropic", "claude"}:
             return self._call_anthropic(model=model, prompt=prompt, temperature=temperature)
         raise ValueError(f"Unsupported LLM provider: {provider}")
+
+    @staticmethod
+    def _call_vllm(
+        *,
+        model: str,
+        prompt: str,
+        temperature: float,
+        seed: Optional[int],
+    ) -> tuple[str, Dict[str, Any]]:
+        from openai import OpenAI  # pragma: no cover - optional dependency.
+
+        base_url = os.environ.get("VLLM_API_BASE", "http://localhost:8000/v1")
+        api_key = os.environ.get("VLLM_API_KEY", "local-dev-key")
+        client = OpenAI(base_url=base_url, api_key=api_key)
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+        }
+        if seed is not None:
+            payload["seed"] = seed
+        resp = client.chat.completions.create(**payload)
+        text = (resp.choices[0].message.content or "").strip()
+        usage = {}
+        if getattr(resp, "usage", None) is not None:
+            usage = {
+                "prompt_tokens": getattr(resp.usage, "prompt_tokens", None),
+                "completion_tokens": getattr(resp.usage, "completion_tokens", None),
+                "total_tokens": getattr(resp.usage, "total_tokens", None),
+            }
+        return text, usage
 
     @staticmethod
     def _call_openai(
@@ -232,8 +268,14 @@ class LLMClient:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is not set")
-        base_url = os.environ.get("OPENAI_BASE_URL") or os.environ.get("LLM_BASE_URL")
+            
+        base_url = (
+            os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("LLM_BASE_URL")
+            or os.environ.get("OPENAI_API_BASE")
+        )
         client_kwargs: Dict[str, Any] = {"api_key": api_key}
+
         if base_url:
             client_kwargs["base_url"] = base_url
         client = OpenAI(**client_kwargs)
@@ -278,6 +320,46 @@ class LLMClient:
                 "total_token_count": getattr(usage_meta, "total_token_count", None),
             }
         return text.strip(), usage
+
+    @staticmethod
+    def _call_gemini_cli(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+        """Call Gemini via the locally-authenticated gemini CLI (no API key)."""
+        import shutil
+        import subprocess
+        import tempfile
+
+        gemini_bin = shutil.which("gemini")
+        if not gemini_bin:
+            raise RuntimeError("gemini CLI is not installed or not on PATH")
+
+        # Write prompt to temp file then pass via shell expansion to avoid
+        # argument length limits on large prompts.
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
+            tmp.write(prompt)
+            tmp_path = tmp.name
+
+        try:
+            # Use shell=True with cat to handle prompts exceeding ARG_MAX.
+            shell_cmd = f'{shlex.quote(gemini_bin)} -p "$(cat {shlex.quote(tmp_path)})" -m {shlex.quote(model)}'
+            result = subprocess.run(
+                shell_cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+            )
+        finally:
+            os.unlink(tmp_path)
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"gemini CLI exited {result.returncode}: {(result.stderr or '')[:500]}"
+            )
+        text = (result.stdout or "").strip()
+        if not text:
+            raise RuntimeError("gemini CLI returned empty output")
+        return text, {"provider": "gemini_cli", "model": model}
 
     @staticmethod
     def _call_anthropic(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:

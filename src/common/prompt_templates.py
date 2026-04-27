@@ -19,4 +19,7 @@ AGENT_PATCH_PROMPT_TEMPLATE = (
     "2) Do not change unrelated behavior.\n"
     "3) Return ONLY one valid unified diff patch.\n"
     "4) Do not use markdown fences and do not include explanation text.\n"
+    "5) Do NOT use any tools. Do NOT read or edit files. Do NOT run commands.\n"
+    "6) Output ONLY a valid unified diff patch (starting with --- and +++).\n"
+    "   No explanation, no commentary, no markdown fences.\n"
 )
