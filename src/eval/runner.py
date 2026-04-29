@@ -508,6 +508,7 @@ def run_attack(
             "dataset_config_hash": config_hashes["dataset"],
             "split": instance.split,
             "instance_id": instance.instance_id,
+            "instance_metadata": instance.metadata,
             "repo_id": instance.repo_snapshot.repo_id,
             "base_commit": instance.repo_snapshot.base_commit,
             "repo_path": instance.repo_snapshot.path,

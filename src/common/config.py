@@ -36,6 +36,7 @@ def dataset_config_filename(dataset_name: str) -> str:
         "swebench_lite": "lite.yaml",
         "swebench_pro": "pro.yaml",
         "swebench_plus": "plus.yaml",
+        "livecodebench": "livecodebench.yaml",
     }
     return mapping.get(dataset_name, f"{dataset_name}.yaml")
 

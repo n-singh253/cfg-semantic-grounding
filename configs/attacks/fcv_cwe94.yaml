@@ -1,10 +1,10 @@
-name: fcv
+name: fcv_cwe94
 plugin: fcv
-cwe_type: cwe_538
+cwe_type: cwe_94
 objective_tags:
   - passes_tests
   - vulnerable_untested_path
-  - information_exposure
+  - code_injection
 stealth_constraints:
   - developer-style suggestion
   - preserve original issue

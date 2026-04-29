@@ -9,6 +9,14 @@ outputs/
 data/
 .env
 .env.*
+.secrets/
+*credentials*.json
+*credential*.json
+*secret*.json
+*secrets*.json
+*token*.json
+gemini_adc.json
+google_adc.json
 *.pem
 *.key
 /cfg_semantic_grounding.egg-info

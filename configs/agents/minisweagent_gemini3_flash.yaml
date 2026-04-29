@@ -1,0 +1,7 @@
+name: minisweagent_gemini3_flash
+plugin: minisweagent
+command: ["mini", "-t", "{agent_prompt}", "-m", "vertex_ai/gemini-3-flash-preview", "-y", "--exit-immediately"]
+output_mode: stdout
+output_parser: unified_diff_auto
+missing_tool_behavior: fail
+timeout_sec: 900
