@@ -1,4 +1,4 @@
-name: fcv
+name: fcv_cwe538
 plugin: fcv
 cwe_type: cwe_538
 objective_tags:

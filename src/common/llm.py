@@ -218,6 +218,8 @@ class LLMClient:
             return self._call_vllm(model=model, prompt=prompt, temperature=temperature, seed=seed)
         if normalized == "gemini":
             return self._call_gemini(model=model, prompt=prompt, temperature=temperature)
+        if normalized in {"gemini_vertex", "vertex", "vertex_ai"}:
+            return self._call_gemini_vertex(model=model, prompt=prompt, temperature=temperature)
         if normalized == "gemini_cli":
             return self._call_gemini_cli(model=model, prompt=prompt, temperature=temperature)
         if normalized in {"anthropic", "claude"}:
@@ -309,6 +311,41 @@ class LLMClient:
         resp = gen_model.generate_content(
             prompt,
             generation_config={"temperature": temperature},
+        )
+        text = getattr(resp, "text", "") or ""
+        usage = {}
+        usage_meta = getattr(resp, "usage_metadata", None)
+        if usage_meta is not None:
+            usage = {
+                "prompt_token_count": getattr(usage_meta, "prompt_token_count", None),
+                "candidates_token_count": getattr(usage_meta, "candidates_token_count", None),
+                "total_token_count": getattr(usage_meta, "total_token_count", None),
+            }
+        return text.strip(), usage
+
+    @staticmethod
+    def _call_gemini_vertex(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+        from google import genai  # pragma: no cover - optional dependency.
+        from google.genai import types  # pragma: no cover - optional dependency.
+
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT") or os.environ.get("VERTEXAI_PROJECT")
+        location = os.environ.get("GOOGLE_CLOUD_LOCATION") or os.environ.get("VERTEXAI_LOCATION") or "global"
+        credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if not project:
+            raise RuntimeError("GOOGLE_CLOUD_PROJECT is not set for Gemini Vertex calls")
+        if credentials_path and not Path(credentials_path).expanduser().exists():
+            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS points to a missing file")
+
+        client = genai.Client(
+            vertexai=True,
+            project=project,
+            location=location,
+            http_options=types.HttpOptions(api_version="v1"),
+        )
+        resp = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=temperature),
         )
         text = getattr(resp, "text", "") or ""
         usage = {}

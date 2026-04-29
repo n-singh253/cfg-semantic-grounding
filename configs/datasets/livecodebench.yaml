@@ -1,0 +1,6 @@
+name: livecodebench
+plugin: livecodebench
+variant: code_generation_lite
+release: release_latest
+split: test
+data_path: "data/livecodebench_code_generation_lite_release_latest.jsonl"

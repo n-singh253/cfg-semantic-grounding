@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 
 from src.common.artifact_store import atomic_write_json, atomic_write_text
 from src.common.diff import looks_like_unified_diff
+from src.common.git_utils import reset_git_checkout
 from src.common.hashing import sha256_text
 from src.common.prompt_templates import AGENT_PATCH_PROMPT_TEMPLATE
 from src.common.subprocess import command_exists, run_command
@@ -27,7 +28,7 @@ def _agent_artifact_dir(agent_name: str, repo_code: Dict[str, Any]) -> Path:
         or ""
     ).strip()
     if run_root:
-        base = Path(str(run_root)) / "artifacts" / "agents" / instance_id / agent_name
+        base = Path(str(run_root)).resolve() / "artifacts" / "agents" / instance_id / agent_name
         return base / artifact_tag if artifact_tag else base
     base = Path(str(repo_code.get("path", "."))) / ".agent_artifacts" / agent_name
     return base / artifact_tag if artifact_tag else base
@@ -219,8 +220,7 @@ def _git_diff(repo_path: Path) -> str:
 def _reset_generated_git_checkout(repo_path: Path) -> None:
     if not (repo_path / ".git").exists():
         return
-    run_command(["git", "reset", "--hard", "HEAD"], cwd=repo_path)
-    run_command(["git", "clean", "-fd"], cwd=repo_path)
+    reset_git_checkout(repo_path, "HEAD")
 
 
 def run_cli_agent(
@@ -287,6 +287,7 @@ def run_cli_agent(
         tests_json=tests_serialized,
     )
     fmt = {
+        "agent_artifact_dir": str(artifact_dir),
         "repo_path": str(repo_code.get("path", ".")),
         "prompt": prompt,
         "agent_prompt": agent_prompt,
@@ -375,6 +376,20 @@ def run_cli_agent(
         diff_text = _extract_unified_diff(stdout_text) if output_parser == "unified_diff_auto" else stdout_text
 
     if not diff_text.strip():
+        if bool(config.get("allow_empty_patch", False)):
+            return Patch(
+                unified_diff="",
+                metadata={
+                    "agent": agent_name,
+                    "tool_available": True,
+                    "returncode": result.returncode,
+                    "empty_output": True,
+                    "env_overrides": sorted(env_override.keys()),
+                    "output_parser": output_parser,
+                    "command": " ".join(shlex.quote(x) for x in command),
+                    **log_paths,
+                },
+            )
         if behavior == "skip":
             return Patch(
                 unified_diff="",
