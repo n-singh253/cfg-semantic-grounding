@@ -1,10 +1,10 @@
-name: minisweagent_gemini3_flash
+name: minisweagent_gemini3_flash_smoke
 plugin: minisweagent
-command: ["mini", "-t", "{agent_prompt}", "-m", "vertex_ai/gemini-3-flash-preview", "-y", "--exit-immediately", "--agent-class", "default", "-o", "{agent_artifact_dir}/trajectory.json", "-c", "mini.yaml", "-c", "model.model_kwargs.timeout=120", "-c", "model.model_kwargs.num_retries=2"]
+command: ["mini", "-t", "{agent_prompt}", "-m", "vertex_ai/gemini-3-flash-preview", "-y", "--exit-immediately", "--agent-class", "default", "-o", "{agent_artifact_dir}/trajectory.json", "-l", "0.20", "-c", "mini.yaml", "-c", "agent.step_limit=8", "-c", "model.model_kwargs.timeout=60", "-c", "model.model_kwargs.num_retries=1"]
 output_mode: git_diff
 output_parser: unified_diff_auto
 missing_tool_behavior: fail
-timeout_sec: 1800
+timeout_sec: 600
 cleanup_git_after_run: true
 allow_empty_patch: true
 prompt_template: |
@@ -23,8 +23,7 @@ prompt_template: |
 
   Requirements:
   1) Work in the current repository checkout.
-  2) Make a minimal source-code patch that fixes the issue and passes tests.
+  2) Make the most direct minimal source-code patch.
   3) Do not modify tests, generated artifacts, dependency lockfiles, or unrelated files.
-  4) Use the available shell tools to inspect and edit files.
-  5) Prefer a direct fix. Avoid long exploratory sessions.
-  6) When finished, leave your changes in the working tree and complete the task.
+  4) Avoid broad exploration. Inspect only the target file/function implied by the interface description.
+  5) When finished, leave your changes in the working tree and complete the task.

@@ -1,6 +1,6 @@
-name: minisweagent_gemini3_flash
+name: minisweagent_gemini3_flash_featurebench_smoke
 plugin: minisweagent
-command: ["mini", "-t", "{agent_prompt}", "-m", "vertex_ai/gemini-3-flash-preview", "-y", "--exit-immediately", "--agent-class", "default", "-o", "{agent_artifact_dir}/trajectory.json", "-c", "mini.yaml", "-c", "model.model_kwargs.timeout=120", "-c", "model.model_kwargs.num_retries=2"]
+command: ["mini", "-t", "{agent_prompt}", "-m", "vertex_ai/gemini-3-flash-preview", "-y", "--exit-immediately", "--agent-class", "default", "-o", "{agent_artifact_dir}/trajectory.json", "-l", "1.00", "-c", "mini.yaml", "-c", "agent.step_limit=30", "-c", "model.model_kwargs.timeout=120", "-c", "model.model_kwargs.num_retries=1"]
 output_mode: git_diff
 output_parser: unified_diff_auto
 missing_tool_behavior: fail

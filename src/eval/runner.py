@@ -20,6 +20,7 @@ from src.baseline.registry import get_baseline
 from src.common.artifact_store import ArtifactStore, atomic_write_json, atomic_write_text
 from src.common.config import config_hash, load_component_config
 from src.common.diff import looks_like_unified_diff
+from src.common.git_utils import reset_git_checkout
 from src.common.hashing import sha256_text
 from src.common.llm import LLMClient
 from src.common.reports import build_dataset_report, build_integration_spec, utc_now
@@ -43,9 +44,8 @@ def _is_git_repo(repo_path: Path) -> bool:
 
 def _reset_git_repo(repo_path: Path, base_commit: str = "") -> bool:
     target = base_commit.strip() or "HEAD"
-    reset_result = run_command(["git", "reset", "--hard", target], cwd=repo_path)
-    clean_result = run_command(["git", "clean", "-fd"], cwd=repo_path)
-    return reset_result.returncode == 0 and clean_result.returncode == 0
+    ok, _, _, _ = reset_git_checkout(repo_path, target)
+    return ok
 
 
 def _make_nongit_backup(repo_path: Path) -> tuple[tempfile.TemporaryDirectory[str], Path] | None:
@@ -170,6 +170,33 @@ def _write_patch_artifacts(
     }
 
 
+def _try_reuse_none_ori_patch(
+    *,
+    out_dir: Path,
+    dataset_name: str,
+    instance_id: str,
+    agent_name: str,
+    agent_hash: str,
+) -> Optional[Patch]:
+    none_dir = out_dir.parent / f"{dataset_name}_none"
+    patch_path = none_dir / "artifacts" / "patches" / instance_id / "ori_patch.diff"
+    if not patch_path.exists():
+        return None
+    diff_text = patch_path.read_text(encoding="utf-8")
+    if not looks_like_unified_diff(diff_text):
+        return None
+    return Patch(
+        unified_diff=diff_text,
+        metadata={
+            "agent": agent_name,
+            "reused_from": "none_attack_ori_patch",
+            "reused_from_path": str(patch_path),
+            "reused_from_run": str(none_dir),
+            "agent_config_hash": agent_hash,
+        },
+    )
+
+
 def _repo_code_with_agent_tag(repo_code: Dict[str, Any], tag: str) -> Dict[str, Any]:
     tagged = dict(repo_code)
     tagged["agent_artifact_tag"] = tag
@@ -184,9 +211,7 @@ def _reset_repo_snapshot(repo_path: Path) -> Dict[str, Any]:
             "reason_code": "non_git_repo_skip",
             "message": f"Repository path is not a git checkout; reset skipped: {repo_path}",
         }
-    reset_res = run_command(["git", "reset", "--hard", "HEAD"], cwd=repo_path)
-    clean_res = run_command(["git", "clean", "-fd"], cwd=repo_path)
-    ok = reset_res.returncode == 0 and clean_res.returncode == 0
+    ok, reset_res, clean_res, recovered_paths = reset_git_checkout(repo_path, "HEAD")
     message = "\n".join(
         [
             f"git reset --hard HEAD (rc={reset_res.returncode})",
@@ -195,6 +220,7 @@ def _reset_repo_snapshot(repo_path: Path) -> Dict[str, Any]:
             f"git clean -fd (rc={clean_res.returncode})",
             (clean_res.stdout or "").strip(),
             (clean_res.stderr or "").strip(),
+            f"recovered encoding paths: {', '.join(recovered_paths)}" if recovered_paths else "",
         ]
     ).strip()
     return {
@@ -456,24 +482,44 @@ def run_attack(
         ori_prompt = instance.prompt
         ori_prompt_hash = sha256_text(ori_prompt)
         try:
-            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-            ori_patch = agent_obj.agent(
-                _repo_code_with_agent_tag(repo_code, "ori_attempt_00"),
-                ori_prompt,
-                instance.tests,
-            )
+            ori_patch = None
+            if attack_plugin != "none":
+                ori_patch = _try_reuse_none_ori_patch(
+                    out_dir=out_dir,
+                    dataset_name=dataset_name,
+                    instance_id=instance.instance_id,
+                    agent_name=agent_name,
+                    agent_hash=config_hashes["agent"],
+                )
+            if ori_patch is None:
+                _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
+                ori_patch = agent_obj.agent(
+                    _repo_code_with_agent_tag(repo_code, "ori_attempt_00"),
+                    ori_prompt,
+                    instance.tests,
+                )
 
             adv_prompt = attack_obj.attack(repo_code, ori_prompt, instance.tests)
             adv_prompt_hash = sha256_text(adv_prompt)
             attack_meta_early = dict(getattr(attack_obj, "last_metadata", {}))
 
-            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
-            adv_patch = agent_obj.agent(
-                _repo_code_with_agent_tag(repo_code, "adv_attempt_00"),
-                adv_prompt,
-                instance.tests,
-            )
-            _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
+            if attack_plugin == "none" and adv_prompt_hash == ori_prompt_hash:
+                adv_patch = Patch(
+                    unified_diff=ori_patch.unified_diff,
+                    metadata={
+                        **ori_patch.metadata,
+                        "reused_from": "ori_patch",
+                        "reason": "none_attack_prompt_unchanged",
+                    },
+                )
+            else:
+                _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
+                adv_patch = agent_obj.agent(
+                    _repo_code_with_agent_tag(repo_code, "adv_attempt_00"),
+                    adv_prompt,
+                    instance.tests,
+                )
+                _restore_repo(repo_path, instance.repo_snapshot.base_commit, backup_path)
         finally:
             if repo_backup:
                 repo_backup[0].cleanup()

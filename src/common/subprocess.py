@@ -27,9 +27,10 @@ def run_command(
     timeout_sec: Optional[int] = None,
 ) -> CommandResult:
     start = time.time()
-    merged_env = None
+    merged_env = os.environ.copy()
+    merged_env.setdefault("LANG", "C.UTF-8")
+    merged_env.setdefault("LC_ALL", "C.UTF-8")
     if env is not None:
-        merged_env = os.environ.copy()
         merged_env.update(env)
     try:
         completed = subprocess.run(
