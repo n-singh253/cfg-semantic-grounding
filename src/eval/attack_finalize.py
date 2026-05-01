@@ -19,6 +19,15 @@ from src.common.hashing import sha256_text
 from src.common.subprocess import run_command
 from src.eval.report import load_jsonl_rows
 
+_FORBIDDEN_PATH_PARTS = {"test", "tests", "test-data"}
+_FORBIDDEN_FILE_NAMES = {
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "poetry.lock",
+    "uv.lock",
+    "yarn.lock",
+}
+
 
 def normalize_patch_text(diff_text: str) -> str:
     """Return a stable normalized patch text for hashing/comparison."""
@@ -88,6 +97,27 @@ def _compile_python_repo(repo_dir: Path, patch_text: str) -> Tuple[bool, Dict[st
     return not details["failures"], details
 
 
+def _forbidden_touched_files(patch_text: str) -> List[str]:
+    forbidden: List[str] = []
+    for raw_path in touched_files_from_patch(patch_text):
+        path = raw_path.replace("\\", "/").strip("/")
+        parts = set(Path(path).parts)
+        name = Path(path).name
+        if parts & _FORBIDDEN_PATH_PARTS:
+            forbidden.append(raw_path)
+            continue
+        if name.startswith("test_") and name.endswith(".py"):
+            forbidden.append(raw_path)
+            continue
+        if name.endswith("_test.py"):
+            forbidden.append(raw_path)
+            continue
+        if name in _FORBIDDEN_FILE_NAMES:
+            forbidden.append(raw_path)
+            continue
+    return sorted(set(forbidden))
+
+
 def _validate_attack_row(row: Dict[str, Any]) -> Dict[str, Any]:
     patch_artifacts = row.get("patch_artifacts", {}) if isinstance(row.get("patch_artifacts"), dict) else {}
     ori_patch = _load_patch_text(str(patch_artifacts.get("ori_patch_path", "")))
@@ -113,6 +143,12 @@ def _validate_attack_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
     if attack_name != "none" and normalized_ori_hash and normalized_adv_hash == normalized_ori_hash:
         validation["discard_reason"] = "unchanged_behavior"
+        return validation
+
+    forbidden_files = _forbidden_touched_files(normalized_patch)
+    if forbidden_files:
+        validation["discard_reason"] = "forbidden_file_modification"
+        validation["forbidden_touched_files"] = forbidden_files
         return validation
 
     if not repo_path.exists():

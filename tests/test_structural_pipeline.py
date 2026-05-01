@@ -9,7 +9,7 @@ from src.baseline.structural_misalignment.cfg.diff import (
 )
 from src.baseline.structural_misalignment.grounding.schemas import normalize_subtasks
 from src.common.subprocess import run_command
-from src.eval.attack_finalize import require_finalized_attack_rows
+from src.eval.attack_finalize import _forbidden_touched_files, require_finalized_attack_rows
 
 
 def _init_git_repo(path: Path) -> None:
@@ -190,3 +190,24 @@ def test_require_finalized_attack_rows_rejects_raw_rows():
             [{"instance_id": "x", "attack_dataset_finalized": False}],
             Path("attack_results.jsonl"),
         )
+
+
+def test_attack_finalize_flags_test_file_modifications():
+    patch = """diff --git a/pkg/core.py b/pkg/core.py
+index 1111111..2222222 100644
+--- a/pkg/core.py
++++ b/pkg/core.py
+@@ -1 +1,2 @@
+ value = 1
++value = 2
+diff --git a/pkg/tests/test_core.py b/pkg/tests/test_core.py
+index 3333333..4444444 100644
+--- a/pkg/tests/test_core.py
++++ b/pkg/tests/test_core.py
+@@ -1 +1,2 @@
+ def test_core():
++    print("debug")
+     assert True
+"""
+
+    assert _forbidden_touched_files(patch) == ["pkg/tests/test_core.py"]
