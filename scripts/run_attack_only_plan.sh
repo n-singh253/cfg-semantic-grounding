@@ -17,6 +17,7 @@ SMOKE_FEATUREBENCH_AGENT="${SMOKE_FEATUREBENCH_AGENT:-minisweagent_gemini3_flash
 SMOKE_LIVECODEBENCH_AGENT="${SMOKE_LIVECODEBENCH_AGENT:-minisweagent_gemini3_flash_smoke}"
 FULL_AGENT="${FULL_AGENT:-minisweagent_gemini3_flash}"
 DRY_RUN="${DRY_RUN:-0}"
+FEATUREBENCH_FULL_EXPECTED_ROWS="${FEATUREBENCH_FULL_EXPECTED_ROWS:-200}"
 
 usage() {
   cat <<'EOF'
@@ -38,6 +39,7 @@ Environment:
   ATTACK_JOB_RETRIES              Per-combination attempts after failure, defaults to 2.
   ATTACK_DATASETS                 Space-separated datasets to run. Defaults to featurebench_full for smoke, both datasets for full.
   ATTACK_ATTACKS                  Space-separated attacks to run.
+  FEATUREBENCH_FULL_EXPECTED_ROWS Expected rows for full FeatureBench, defaults to 200.
   DRY_RUN                         Set to 1 to print the plan without running attacks or requiring credentials.
   PYTHONUNBUFFERED                Defaults to 1 so runner output appears promptly.
 EOF
@@ -64,8 +66,8 @@ estimate_instances() {
   fi
   case "$dataset" in
     featurebench_full)
-      if [[ -f data/featurebench_full.jsonl ]]; then
-        wc -l < data/featurebench_full.jsonl | tr -d ' '
+      if [[ -f data/featurebench_full_attack_ready.jsonl ]]; then
+        wc -l < data/featurebench_full_attack_ready.jsonl | tr -d ' '
       else
         printf "unknown"
       fi
@@ -105,6 +107,29 @@ count_csv_items() {
     return
   fi
   awk -F',' '{print NF}' <<<"$value"
+}
+
+validate_dataset_ready() {
+  local dataset="$1"
+  case "$dataset" in
+    featurebench_full)
+      local path="data/featurebench_full_attack_ready.jsonl"
+      if [[ ! -f "$path" ]]; then
+        echo "[attack-plan] missing $path" >&2
+        echo "[attack-plan] run: $PYTHON scripts/setup_featurebench.py --variant full --force" >&2
+        exit 1
+      fi
+      if [[ "$MODE" == "full" ]]; then
+        local rows
+        rows="$(wc -l < "$path" | tr -d ' ')"
+        if (( rows < FEATUREBENCH_FULL_EXPECTED_ROWS )); then
+          echo "[attack-plan] $path has only $rows rows; expected at least $FEATUREBENCH_FULL_EXPECTED_ROWS for --full" >&2
+          echo "[attack-plan] run: $PYTHON scripts/setup_featurebench.py --variant full --force" >&2
+          exit 1
+        fi
+      fi
+      ;;
+  esac
 }
 
 MODE="smoke"
@@ -171,6 +196,12 @@ read -r -a attacks <<<"$ATTACK_ATTACKS"
 total_jobs=$((${#datasets[@]} * ${#attacks[@]}))
 job_idx=0
 overall_start=$(date +%s)
+
+if [[ "$DRY_RUN" != "1" ]]; then
+  for dataset in "${datasets[@]}"; do
+    validate_dataset_ready "$dataset"
+  done
+fi
 
 if [[ -n "${AGENT:-}" ]]; then
   agent_banner="$AGENT"

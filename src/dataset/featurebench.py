@@ -8,9 +8,8 @@ from typing import Any, Dict, List, Optional
 
 from src.common.types import DatasetLoadResult, ProblemInstance, RepoSnapshot, TestSpec
 from src.dataset.registry import register_dataset
-from src.dataset.swebench import _lazy_clone
 
-REPOS_ROOT = Path.home() / "featurebench_repos"
+MATERIALIZATION_VERSION = "featurebench_attack_ready_v2"
 
 
 class FeatureBenchDataset:
@@ -66,19 +65,27 @@ class FeatureBenchDataset:
             if not repo_path:
                 errors.append(f"{iid}: missing repo_path")
                 continue
+            if not bool(row.get("featurebench_materialized", False)):
+                errors.append(
+                    f"{iid}: FeatureBench row is not materialized. "
+                    "Run: python scripts/setup_featurebench.py --variant full"
+                )
+                continue
+            if str(row.get("featurebench_materialization_version", "")) != MATERIALIZATION_VERSION:
+                errors.append(
+                    f"{iid}: unsupported FeatureBench materialization version "
+                    f"{row.get('featurebench_materialization_version')!r}; expected {MATERIALIZATION_VERSION!r}"
+                )
+                continue
 
             rp = Path(repo_path)
-            if not (rp / ".git").exists() and repo_id:
-                if not _lazy_clone(repo_id, rp):
-                    errors.append(f"{iid}: failed to clone {repo_id}")
-                    continue
+            if not (rp / ".git").exists():
+                errors.append(f"{iid}: materialized repo_path is not a git checkout: {rp}")
+                continue
 
             test_cmd = row.get("test_command") or ["python3", "-m", "pytest", "-xvs"]
             if isinstance(test_cmd, str):
                 test_cmd = test_cmd.split()
-            fail_to_pass = row.get("FAIL_TO_PASS") or []
-            if isinstance(fail_to_pass, list) and fail_to_pass:
-                test_cmd = ["python3", "-m", "pytest", "-xvs"] + fail_to_pass
 
             instances.append(
                 ProblemInstance(
@@ -96,6 +103,12 @@ class FeatureBenchDataset:
                         "variant": variant,
                         "source_path": str(source),
                         "image_name": row.get("image_name", ""),
+                        "featurebench_level": row.get("featurebench_level", ""),
+                        "hf_base_commit": row.get("hf_base_commit", ""),
+                        "featurebench_patch_direction": row.get("featurebench_patch_direction", ""),
+                        "featurebench_patch_hash": row.get("featurebench_patch_hash", ""),
+                        "source_repo_path": row.get("source_repo_path", ""),
+                        "original_test_command": row.get("original_test_command", []),
                     },
                 )
             )
