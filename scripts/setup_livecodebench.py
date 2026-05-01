@@ -29,16 +29,78 @@ from __future__ import annotations
 
 import json
 import base64
+import importlib.util
+import inspect
 import subprocess
 import sys
+import typing
 from pathlib import Path
 
 
 PUBLIC_TEST_CASES = json.loads(base64.b64decode("__PUBLIC_TEST_CASES_B64__").decode("utf-8"))
+FUNC_NAME = "__FUNC_NAME__"
 
 
 def _norm(text: str) -> str:
     return text.replace("\r\n", "\n").strip()
+
+
+def _parse_jsonish(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
+
+
+def _load_solution_module(root: Path):
+    spec = importlib.util.spec_from_file_location("lcb_solution", root / "solution.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not import solution.py")
+    module = importlib.util.module_from_spec(spec)
+    module.__dict__.update(
+        {
+            "List": typing.List,
+            "Dict": typing.Dict,
+            "Set": typing.Set,
+            "Tuple": typing.Tuple,
+            "Optional": typing.Optional,
+        }
+    )
+    sys.modules["lcb_solution"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _run_functional_case(root: Path, case: dict) -> tuple[bool, dict]:
+    if not FUNC_NAME:
+        return False, {"reason": "missing_func_name"}
+    module = _load_solution_module(root)
+    solution_cls = getattr(module, "Solution", None)
+    if solution_cls is None:
+        return False, {"reason": "missing_solution_class"}
+    method = getattr(solution_cls(), FUNC_NAME, None)
+    if method is None:
+        return False, {"reason": "missing_method", "func_name": FUNC_NAME}
+
+    parsed_input = _parse_jsonish(case.get("input", ""))
+    expected = _parse_jsonish(case.get("output", ""))
+    positional_count = len(
+        [
+            param
+            for param in inspect.signature(method).parameters.values()
+            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD)
+            and param.default is param.empty
+        ]
+    )
+    if isinstance(parsed_input, list) and positional_count != 1:
+        args = parsed_input
+    else:
+        args = [parsed_input]
+
+    actual = method(*args)
+    return actual == expected, {"expected": expected, "actual": actual}
 
 
 def main() -> int:
@@ -51,7 +113,16 @@ def main() -> int:
     failures = []
     skipped = 0
     for idx, case in enumerate(PUBLIC_TEST_CASES, start=1):
-        if str(case.get("testtype", "stdin")).lower() != "stdin":
+        testtype = str(case.get("testtype", "stdin")).lower()
+        if testtype == "functional":
+            try:
+                ok, details = _run_functional_case(root, case)
+            except Exception as exc:
+                ok, details = False, {"reason": "exception", "message": repr(exc)}
+            if not ok:
+                failures.append({"case": idx, "testtype": testtype, **details})
+            continue
+        if testtype != "stdin":
             skipped += 1
             continue
         proc = subprocess.run(
@@ -78,7 +149,7 @@ def main() -> int:
     if failures:
         print(json.dumps({"failures": failures[:5], "failure_count": len(failures)}, indent=2))
         return 1
-    print(json.dumps({"passed": len(PUBLIC_TEST_CASES) - skipped, "skipped": skipped}))
+    print(json.dumps({"passed": len(PUBLIC_TEST_CASES) - skipped - len(failures), "skipped": skipped}))
     return 0
 
 
@@ -199,6 +270,11 @@ def _problem_statement(row: Dict[str, Any]) -> str:
     return "\n".join(parts).strip() + "\n"
 
 
+def _metadata(row: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = _parse_jsonish(row.get("metadata"), {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
 def _write_repo(repo_path: Path, row: Dict[str, Any], public_cases: List[Dict[str, Any]]) -> str:
     repo_path.mkdir(parents=True, exist_ok=True)
     (repo_path / "tests").mkdir(exist_ok=True)
@@ -207,7 +283,11 @@ def _write_repo(repo_path: Path, row: Dict[str, Any], public_cases: List[Dict[st
 
     public_json = json.dumps(public_cases, ensure_ascii=True)
     public_b64 = base64.b64encode(public_json.encode("utf-8")).decode("ascii")
-    test_script = RUN_PUBLIC_TESTS.replace("__PUBLIC_TEST_CASES_B64__", public_b64)
+    func_name = str(_metadata(row).get("func_name") or "")
+    test_script = (
+        RUN_PUBLIC_TESTS.replace("__PUBLIC_TEST_CASES_B64__", public_b64)
+        .replace("__FUNC_NAME__", func_name)
+    )
     test_path = repo_path / "tests" / "run_public_tests.py"
     test_path.write_text(test_script, encoding="utf-8")
     test_path.chmod(0o755)
@@ -275,6 +355,7 @@ def build_rows(dataset: Iterable[Dict[str, Any]], release: str, out_path: Path, 
                 "contest_date": str(row.get("contest_date", "")),
                 "difficulty": row.get("difficulty", ""),
                 "public_test_count": len(public_cases),
+                "func_name": _metadata(row).get("func_name", ""),
                 "private_tests_path": str(private_tests_path),
                 "private_tests_hash": _sha256_text(str(private_tests_raw)),
             }
