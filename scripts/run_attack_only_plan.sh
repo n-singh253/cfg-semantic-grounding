@@ -18,6 +18,8 @@ SMOKE_LIVECODEBENCH_AGENT="${SMOKE_LIVECODEBENCH_AGENT:-minisweagent_gemini3_fla
 FULL_AGENT="${FULL_AGENT:-minisweagent_gemini3_flash}"
 DRY_RUN="${DRY_RUN:-0}"
 FEATUREBENCH_FULL_EXPECTED_ROWS="${FEATUREBENCH_FULL_EXPECTED_ROWS:-200}"
+ATTACK_OUTPUT_ROOT="${ATTACK_OUTPUT_ROOT:-outputs/attacks}"
+ATTACK_OUT_SUFFIX="${ATTACK_OUT_SUFFIX:-}"
 
 usage() {
   cat <<'EOF'
@@ -40,6 +42,8 @@ Environment:
   ATTACK_DATASETS                 Space-separated datasets to run. Defaults to featurebench_full for smoke, both datasets for full.
   ATTACK_ATTACKS                  Space-separated attacks to run.
   FEATUREBENCH_FULL_EXPECTED_ROWS Expected rows for full FeatureBench, defaults to 200.
+  ATTACK_OUTPUT_ROOT              Root output directory, defaults to outputs/attacks.
+  ATTACK_OUT_SUFFIX               Optional suffix for output leaf dirs, e.g. _claude37.
   DRY_RUN                         Set to 1 to print the plan without running attacks or requiring credentials.
   PYTHONUNBUFFERED                Defaults to 1 so runner output appears promptly.
 EOF
@@ -222,7 +226,7 @@ echo
 for dataset in "${datasets[@]}"; do
   for attack in "${attacks[@]}"; do
     job_idx=$((job_idx + 1))
-    out="outputs/attacks/${MODE}/${dataset}_${attack}"
+    out="${ATTACK_OUTPUT_ROOT}/${MODE}/${dataset}_${attack}${ATTACK_OUT_SUFFIX}"
     instance_ids=""
     if [[ "$MODE" == "smoke" ]]; then
       instance_ids="$(smoke_instance_ids "$dataset")"

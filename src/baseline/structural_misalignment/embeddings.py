@@ -46,7 +46,9 @@ def _require_embedding_deps():
 def _load_encoder(model_name: str):
     torch, AutoModel, AutoTokenizer = _require_embedding_deps()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name)
+    # Prefer safetensors so recent Transformers versions do not block loading
+    # PyTorch .bin checkpoints on older torch releases.
+    model = AutoModel.from_pretrained(model_name, use_safetensors=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     model.eval()

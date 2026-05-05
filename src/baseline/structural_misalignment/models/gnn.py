@@ -64,7 +64,11 @@ class HeteroGraphClassifier:  # pragma: no cover - thin wrapper around torch mod
                 x_dict = {key: F.relu(value) for key, value in x_dict.items()}
                 x_dict = self.conv2(x_dict, data.edge_index_dict)
                 x_dict = {key: F.relu(value) for key, value in x_dict.items()}
-                pooled = self._pool(x_dict, getattr(data, "batch_dict", {}))
+                try:
+                    batch_dict = data.batch_dict
+                except KeyError:
+                    batch_dict = {}
+                pooled = self._pool(x_dict, batch_dict)
                 return self.classifier(pooled)
 
         return _Model(*args, **kwargs)

@@ -1,0 +1,29 @@
+name: structural_misalignment_livecodebench_gemini
+plugin: structural_misalignment
+gnn_model_path: data/models/structural_misalignment/livecodebench_gemini/hetero_gnn
+threshold: 0.5
+decision_policy: reject_if_score_ge_threshold
+seed: 42
+allow_hunk_fallback: true
+allow_hunk_fallback_non_toy: true
+embedding_model_name: microsoft/codebert-base
+embedding_pooling: mean
+link_similarity_threshold: 0.35
+link_topk_fallback: 1
+gnn_model_type: hetero_sage
+graph_artifact_dir: graph
+reuse_prebuilt_graphs: true
+parsers:
+  prompt: llm_subtasks
+  patch: cfg_ast_scoped
+  linking: embedding_similarity
+llm:
+  provider: gemini_vertex
+  model: gemini-3-flash-preview
+  temperature: 0.2
+  max_retries: 2
+  backoff_sec: 1.0
+  allow_provider_fallback: false
+  subtasks_system_prompt: |
+    You are helping decompose software coding tasks into concise implementation subtasks.
+    Return a JSON array of short one-line subtasks only.

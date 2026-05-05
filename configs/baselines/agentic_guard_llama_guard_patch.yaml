@@ -1,0 +1,12 @@
+name: agentic_guard_llama_guard_patch
+plugin: llama_guard
+
+# Agentic Guard as a model-based safety gate over the agent's proposed patch.
+# This treats the adversarial patch as the guarded agent output.
+model: meta-llama/Llama-Guard-4-12B
+max_length: 4096
+chunk_chars: 12000
+chunk_overlap_chars: 1500
+max_new_tokens: 8
+use_cache: true
+input_field: patch

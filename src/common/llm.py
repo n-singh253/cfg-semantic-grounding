@@ -106,6 +106,8 @@ class LLMClient:
                     temperature=temperature,
                     seed=seed,
                 )
+                if not (text or "").strip():
+                    raise RuntimeError("LLM provider returned empty response")
                 response_hash = sha256_text(text)
                 blocked = self._is_blocked_text(text)
                 result = LLMCallResult(
@@ -222,6 +224,8 @@ class LLMClient:
             return self._call_gemini_vertex(model=model, prompt=prompt, temperature=temperature)
         if normalized == "gemini_cli":
             return self._call_gemini_cli(model=model, prompt=prompt, temperature=temperature)
+        if normalized in {"anthropic_vertex", "claude_vertex", "vertex_anthropic"}:
+            return self._call_anthropic_vertex(model=model, prompt=prompt, temperature=temperature)
         if normalized in {"anthropic", "claude"}:
             return self._call_anthropic(model=model, prompt=prompt, temperature=temperature)
         raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -336,16 +340,36 @@ class LLMClient:
         if credentials_path and not Path(credentials_path).expanduser().exists():
             raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS points to a missing file")
 
+        timeout_ms = int(
+            os.environ.get("CFG_GEMINI_VERTEX_TIMEOUT_MS")
+            or os.environ.get("CFG_LLM_TIMEOUT_MS")
+            or "90000"
+        )
+        max_output_tokens_env = os.environ.get("CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS") or os.environ.get(
+            "CFG_LLM_MAX_OUTPUT_TOKENS"
+        )
+        max_output_tokens = int(max_output_tokens_env) if max_output_tokens_env else None
+        response_mime_type = os.environ.get("CFG_GEMINI_VERTEX_RESPONSE_MIME_TYPE") or os.environ.get(
+            "CFG_LLM_RESPONSE_MIME_TYPE"
+        )
         client = genai.Client(
             vertexai=True,
             project=project,
             location=location,
-            http_options=types.HttpOptions(api_version="v1"),
+            http_options=types.HttpOptions(api_version="v1", timeout=timeout_ms),
         )
+        generation_config: Dict[str, Any] = {
+            "temperature": temperature,
+            "http_options": types.HttpOptions(api_version="v1", timeout=timeout_ms),
+        }
+        if max_output_tokens is not None:
+            generation_config["max_output_tokens"] = max_output_tokens
+        if response_mime_type:
+            generation_config["response_mime_type"] = response_mime_type
         resp = client.models.generate_content(
             model=model,
             contents=prompt,
-            config=types.GenerateContentConfig(temperature=temperature),
+            config=types.GenerateContentConfig(**generation_config),
         )
         text = getattr(resp, "text", "") or ""
         usage = {}
@@ -406,6 +430,48 @@ class LLMClient:
         if not api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is not set")
         client = Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model=model,
+            max_tokens=2048,
+            temperature=temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text_parts = []
+        for block in getattr(resp, "content", []):
+            if getattr(block, "type", "") == "text":
+                text_parts.append(getattr(block, "text", ""))
+        usage = {}
+        if getattr(resp, "usage", None) is not None:
+            usage = {
+                "input_tokens": getattr(resp.usage, "input_tokens", None),
+                "output_tokens": getattr(resp.usage, "output_tokens", None),
+            }
+        return "\n".join(text_parts).strip(), usage
+
+    @staticmethod
+    def _call_anthropic_vertex(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+        from anthropic import AnthropicVertex  # pragma: no cover - optional dependency.
+
+        project_id = (
+            os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
+            or os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("VERTEXAI_PROJECT")
+        )
+        region = os.environ.get("ANTHROPIC_VERTEX_REGION") or os.environ.get("VERTEXAI_LOCATION")
+        credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if not project_id:
+            raise RuntimeError("ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT is not set")
+        if not region:
+            raise RuntimeError("ANTHROPIC_VERTEX_REGION or VERTEXAI_LOCATION is not set")
+        if credentials_path and not Path(credentials_path).expanduser().exists():
+            raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS points to a missing file")
+
+        timeout_sec = float(
+            os.environ.get("CFG_ANTHROPIC_VERTEX_TIMEOUT_SEC")
+            or os.environ.get("CFG_LLM_TIMEOUT_SEC")
+            or "90"
+        )
+        client = AnthropicVertex(region=region, project_id=project_id, timeout=timeout_sec)
         resp = client.messages.create(
             model=model,
             max_tokens=2048,
