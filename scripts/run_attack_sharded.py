@@ -11,7 +11,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TextIO
 
 import src.dataset  # noqa: F401
 from src.common.artifact_store import atomic_write_json, atomic_write_text
@@ -20,13 +20,38 @@ from src.dataset.registry import get_dataset
 from src.eval.attack_finalize import _validate_attack_row
 from src.eval.report import load_jsonl_rows
 
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover - progress bar is optional
+    tqdm = None
+
+RunningShard = tuple[
+    int,
+    subprocess.Popen[str],
+    List[str],
+    Path,
+    float,
+    int,
+    TextIO,
+    TextIO,
+]
+
 
 def _dataset_attack_dir(dataset: str, attack: str) -> str:
     return f"{dataset}_{attack}"
 
 
-def _instance_ids(dataset: str, split: str, config_dir: Path, limit: int | None) -> List[str]:
+def _instance_ids(
+    dataset: str,
+    split: str,
+    config_dir: Path,
+    limit: int | None,
+    dataset_data_path: str | None,
+) -> List[str]:
     cfg = load_component_config(config_dir, "datasets", dataset)
+    if dataset_data_path:
+        cfg = dict(cfg)
+        cfg["data_path"] = dataset_data_path
     plugin = str(cfg.get("plugin", dataset))
     result = get_dataset(plugin)().load(
         split=split,
@@ -93,29 +118,92 @@ def _unique_paths(paths: List[Path]) -> List[Path]:
     return unique
 
 
-def _run_shards(commands: List[List[str]], *, parallel: int, env: Dict[str, str]) -> List[int]:
-    running: List[tuple[int, subprocess.Popen[str], List[str], float]] = []
+def _result_line_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _run_shards(
+    commands: List[tuple[List[str], Path]],
+    *,
+    parallel: int,
+    env: Dict[str, str],
+    total_remaining: int,
+) -> List[int]:
+    running: List[RunningShard] = []
     returncodes: List[int] = []
     next_idx = 0
-    while next_idx < len(commands) or running:
-        while next_idx < len(commands) and len(running) < parallel:
-            cmd = commands[next_idx]
-            print(f"[shard-runner] start shard={next_idx:02d}: {' '.join(cmd)}", flush=True)
-            proc = subprocess.Popen(cmd, env=env, text=True)
-            running.append((next_idx, proc, cmd, time.time()))
-            next_idx += 1
+    progress = (
+        tqdm(total=total_remaining, desc="attack shards", unit="row", dynamic_ncols=True) if tqdm else None
+    )
+    try:
+        while next_idx < len(commands) or running:
+            while next_idx < len(commands) and len(running) < parallel:
+                cmd, result_path = commands[next_idx]
+                shard_out = result_path.parent
+                logs_dir = shard_out / "logs" / "runner"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                stdout_f = (logs_dir / "stdout.log").open("a", encoding="utf-8")
+                stderr_f = (logs_dir / "stderr.log").open("a", encoding="utf-8")
+                print(f"[shard-runner] start shard={next_idx:02d} logs={logs_dir}", flush=True)
+                child_env = dict(env)
+                child_env["CFG_DISABLE_TQDM"] = "1"
+                proc = subprocess.Popen(
+                    cmd,
+                    env=child_env,
+                    text=True,
+                    stdout=stdout_f,
+                    stderr=stderr_f,
+                )
+                running.append(
+                    (
+                        next_idx,
+                        proc,
+                        cmd,
+                        result_path,
+                        time.time(),
+                        _result_line_count(result_path),
+                        stdout_f,
+                        stderr_f,
+                    )
+                )
+                next_idx += 1
 
-        time.sleep(5)
-        still_running: List[tuple[int, subprocess.Popen[str], List[str], float]] = []
-        for idx, proc, cmd, start in running:
-            rc = proc.poll()
-            if rc is None:
-                still_running.append((idx, proc, cmd, start))
-                continue
-            elapsed = int(time.time() - start)
-            print(f"[shard-runner] finished shard={idx:02d} rc={rc} elapsed={elapsed}s", flush=True)
-            returncodes.append(rc)
-        running = still_running
+            time.sleep(5)
+            still_running: List[RunningShard] = []
+            for idx, proc, cmd, result_path, start, last_count, stdout_f, stderr_f in running:
+                rc = proc.poll()
+                current_count = _result_line_count(result_path)
+                if current_count > last_count:
+                    delta = current_count - last_count
+                    if progress is not None:
+                        progress.update(delta)
+                    last_count = current_count
+                if rc is None:
+                    still_running.append(
+                        (idx, proc, cmd, result_path, start, last_count, stdout_f, stderr_f)
+                    )
+                    continue
+                stdout_f.close()
+                stderr_f.close()
+                elapsed = int(time.time() - start)
+                if progress is None:
+                    print(
+                        f"[shard-runner] finished shard={idx:02d} rc={rc} "
+                        f"rows={current_count} elapsed={elapsed}s",
+                        flush=True,
+                    )
+                returncodes.append(rc)
+            running = still_running
+    finally:
+        if progress is not None:
+            progress.close()
+        for _, proc, _, _, _, _, stdout_f, stderr_f in running:
+            if proc.poll() is None:
+                proc.terminate()
+            stdout_f.close()
+            stderr_f.close()
     return returncodes
 
 
@@ -263,6 +351,11 @@ def main() -> int:
     parser.add_argument("--parallel", type=int, default=4)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
+        "--dataset-data-path",
+        default=None,
+        help="Optional local dataset JSONL path override for datasets that use data_path.",
+    )
+    parser.add_argument(
         "--no-global-resume",
         action="store_true",
         help="Do not scan existing shard outputs before rechunking. By default, completed IDs are skipped globally.",
@@ -274,7 +367,7 @@ def main() -> int:
         raise SystemExit("--shards and --parallel must be >= 1")
 
     config_dir = Path(args.config_dir)
-    ids = _instance_ids(args.dataset, args.split, config_dir, args.limit)
+    ids = _instance_ids(args.dataset, args.split, config_dir, args.limit, args.dataset_data_path)
     model_root = Path(args.out_root)
     run_root = model_root / args.mode
     shard_base = run_root / "shards"
@@ -294,35 +387,36 @@ def main() -> int:
     pending_ids = [instance_id for instance_id in ids if instance_id not in completed_ids]
     chunks = _chunks(pending_ids, args.shards)
 
-    commands: List[List[str]] = []
+    commands: List[tuple[List[str], Path]] = []
     shard_dirs: List[Path] = []
     for idx, shard_ids in enumerate(chunks):
         shard_out = shard_base / f"shard_{idx:02d}" / _dataset_attack_dir(args.dataset, args.attack)
         shard_dirs.append(shard_out)
-        commands.append(
-            [
-                sys.executable,
-                "-m",
-                "src.eval.cli",
-                "run_attack",
-                "--dataset",
-                args.dataset,
-                "--split",
-                args.split,
-                "--agent",
-                args.agent,
-                "--attack",
-                args.attack,
-                "--fidelity-mode",
-                args.fidelity_mode,
-                "--out",
-                str(shard_out),
-                "--config-dir",
-                str(config_dir),
-                "--instance-id",
-                ",".join(shard_ids),
-            ]
-        )
+        command = [
+            sys.executable,
+            "-m",
+            "src.eval.cli",
+            "run_attack",
+            "--dataset",
+            args.dataset,
+            "--split",
+            args.split,
+            "--agent",
+            args.agent,
+            "--attack",
+            args.attack,
+            "--fidelity-mode",
+            args.fidelity_mode,
+            "--out",
+            str(shard_out),
+            "--config-dir",
+            str(config_dir),
+            "--instance-id",
+            ",".join(shard_ids),
+        ]
+        if args.dataset_data_path:
+            command.extend(["--dataset-data-path", args.dataset_data_path])
+        commands.append((command, shard_out / "attack_results.jsonl"))
 
     manifest = {
         "dataset": args.dataset,
@@ -333,6 +427,7 @@ def main() -> int:
         "completed_instances_skipped": len(completed_ids),
         "pending_instances": len(pending_ids),
         "global_resume_enabled": not args.no_global_resume,
+        "dataset_data_path": args.dataset_data_path or "",
         "shards": len(chunks),
         "parallel": args.parallel,
         "final_out": str(final_out),
@@ -347,13 +442,13 @@ def main() -> int:
         flush=True,
     )
     if args.dry_run:
-        for cmd in commands:
+        for cmd, _ in commands:
             print("[shard-runner] dry-run:", " ".join(cmd))
         return 0
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
-    returncodes = _run_shards(commands, parallel=args.parallel, env=env)
+    returncodes = _run_shards(commands, parallel=args.parallel, env=env, total_remaining=len(pending_ids))
     if any(rc != 0 for rc in returncodes) or len(returncodes) != len(commands):
         print(f"[shard-runner] one or more shards failed: {returncodes}", file=sys.stderr)
         return 1

@@ -65,6 +65,11 @@ def parse_args(argv: Optional[List[str]] = None):
     attack.add_argument("--out", required=True)
     attack.add_argument("--config-dir", default="configs")
     attack.add_argument("--workers", type=int, default=1)
+    attack.add_argument(
+        "--dataset-data-path",
+        default=None,
+        help="Optional local dataset JSONL path override for datasets that use data_path.",
+    )
 
     defense = sub.add_parser("run_defense", help="Run defense phase only (evaluate defense on finalized attack datasets).")
     defense.add_argument("--attack-results", required=True, help="Path to finalized attack_dataset.jsonl from run_attack")
@@ -134,6 +139,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             config_dir=Path(args.config_dir),
             cli_invocation=cli_invocation,
             swexploit_adv_patches=args.swexploit_adv_patches,
+            dataset_data_path=args.dataset_data_path,
         )
         return 0  
 

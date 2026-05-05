@@ -5,8 +5,7 @@ data_preparation:
   benign_attack_dataset_paths:
     - outputs/attacks/gemini3_flash/full/livecodebench_none/attack_dataset.jsonl
   malicious_attack_dataset_paths:
-    - outputs/attacks/gemini3_flash/full/livecodebench_fcv_cwe94/attack_dataset.jsonl
-    - outputs/attacks/gemini3_flash/full/livecodebench_swexploit_gemini_vertex/attack_dataset.jsonl
+    - outputs/attacks/claude37_sonnet_sweagent/full/livecodebench_vuln_rewrite_claude37_sonnet_vertex/attack_dataset.jsonl
   split_strategy: by_instance
   test_fraction: 0.2
   split_seed: 42

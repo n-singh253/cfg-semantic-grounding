@@ -328,6 +328,7 @@ def run_attack(
     config_dir: Path,
     cli_invocation: str,
     swexploit_adv_patches: Optional[str] = None,
+    dataset_data_path: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Phase 1: Run attack on all instances, generate prompts and patches.
@@ -350,6 +351,7 @@ def run_attack(
         config_dir: Configuration directory path
         cli_invocation: CLI command string for reproducibility
         swexploit_adv_patches: Optional path to prebuilt adversarial patches
+        dataset_data_path: Optional local dataset JSONL path override
     
     Returns:
         List of attack result rows
@@ -371,6 +373,10 @@ def run_attack(
         attack_name=attack_name,
         baseline_name=None,  # Skip baseline loading for attack-only phase
     )
+
+    if dataset_data_path:
+        configs["dataset"] = dict(configs["dataset"])
+        configs["dataset"]["data_path"] = str(Path(dataset_data_path).expanduser())
     
     if swexploit_adv_patches and attack_name == "swexploit":
         configs["attack"] = dict(configs["attack"])

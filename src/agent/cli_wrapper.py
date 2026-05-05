@@ -235,7 +235,7 @@ def run_cli_agent(
     if not isinstance(command_template, list) or not command_template:
         raise ValueError(f"{agent_name}: config.command must be a non-empty list")
 
-    executable = str(command_template[0])
+    executable = os.path.expanduser(os.path.expandvars(str(command_template[0])))
     resolved_executable = _resolve_cli_executable(executable)
     behavior = str(config.get("missing_tool_behavior", "fail")).lower()
     artifact_dir = _agent_artifact_dir(agent_name, repo_code)
@@ -297,7 +297,10 @@ def run_cli_agent(
         "instance_id": str(repo_code.get("instance_id", "unknown_instance")),
         "base_commit": str(repo_code.get("base_commit", "unknown")),
     }
-    command = [str(part).format(**fmt) for part in command_template]
+    command = [
+        os.path.expanduser(os.path.expandvars(str(part).format(**fmt)))
+        for part in command_template
+    ]
     if command:
         if executable in {"gemini", "gemini-cli"}:
             node_bin = _node_for_nvm_gemini(resolved_executable)
