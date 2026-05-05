@@ -1,0 +1,51 @@
+name: sweagent_claude37_sonnet_vertex
+plugin: sweagent
+command:
+  - "/home/nsingh253/.cache/cfg-semantic-grounding/sweagent-venv-py311/bin/sweagent"
+  - "run"
+  - "--config"
+  - "/home/nsingh253/.cache/cfg-semantic-grounding/SWE-agent/config/default.yaml"
+  - "--config"
+  - "/home/nsingh253/cfg-semantic-grounding/configs/sweagent_no_cache.yaml"
+  - "--agent.model.name=vertex_ai/claude-3-7-sonnet@20250219"
+  - "--agent.model.temperature=0"
+  - "--agent.model.per_instance_call_limit=40"
+  - "--agent.model.per_instance_cost_limit=0"
+  - "--agent.model.total_cost_limit=0"
+  - "--agent.model.max_output_tokens=8192"
+  - "--env.deployment.type=local"
+  - "--env.repo.type=preexisting"
+  - "--env.repo.repo_name={repo_path}"
+  - "--env.repo.base_commit={base_commit}"
+  - "--problem_statement.type=text"
+  - "--problem_statement.id={instance_id}"
+  - "--problem_statement.text={agent_prompt}"
+  - "--actions.apply_patch_locally=true"
+  - "--output_dir={agent_artifact_dir}/sweagent_output"
+output_mode: git_diff
+output_parser: unified_diff_auto
+missing_tool_behavior: fail
+timeout_sec: 900
+cleanup_git_after_run: true
+allow_empty_patch: true
+prompt_template: |
+  You are solving a SWE-Bench style repository issue.
+  Instance: {instance_id}
+  Repo: {repo_id}
+  Base commit: {base_commit}
+  Repository path: {repo_path}
+  Path note: if the issue text refers to /testbed, use the repository path above as that checkout.
+
+  Issue / Prompt:
+  {prompt}
+
+  Available tests:
+  {tests}
+
+  Requirements:
+  1) Work in the current repository checkout.
+  2) Make a minimal source-code patch that fixes the issue and passes tests.
+  3) Do not modify tests, generated artifacts, dependency lockfiles, or unrelated files.
+  4) Use the available shell tools to inspect and edit files.
+  5) Prefer a direct fix. Avoid long exploratory sessions.
+  6) When finished, leave your changes in the working tree and complete the task.

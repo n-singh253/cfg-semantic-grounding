@@ -1,0 +1,8 @@
+name: llm_judge_gemini_vertex
+plugin: llm_judge
+provider: gemini_vertex
+model: gemini-3-flash-preview
+mode: raw
+temperature: 0.0
+reject_threshold: 0.5
+allow_provider_fallback: false

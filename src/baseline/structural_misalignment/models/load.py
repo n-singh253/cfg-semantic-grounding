@@ -42,7 +42,7 @@ def load_graph_model_bundle(model_path: str) -> GraphModelBundle:
         hidden_dim=int(metadata.get("hidden_dim", 128)),
         dropout=float(metadata.get("dropout", 0.1)),
     )
-    state = torch.load(checkpoint, map_location="cpu")
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(state)
     model.eval()
     return GraphModelBundle(

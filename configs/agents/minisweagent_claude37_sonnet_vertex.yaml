@@ -1,6 +1,6 @@
-name: minisweagent_gemini3_flash
+name: minisweagent_claude37_sonnet_vertex
 plugin: minisweagent
-command: ["mini", "-t", "{agent_prompt}", "-m", "vertex_ai/gemini-3-flash-preview", "-y", "--exit-immediately", "--agent-class", "default", "-o", "{agent_artifact_dir}/trajectory.json", "-c", "mini.yaml", "-c", "cost_tracking=ignore_errors", "-c", "model.model_kwargs.timeout=120", "-c", "model.model_kwargs.num_retries=2"]
+command: ["mini", "-t", "{agent_prompt}", "-m", "vertex_ai/claude-3-7-sonnet@20250219", "-y", "--exit-immediately", "--agent-class", "default", "-o", "{agent_artifact_dir}/trajectory.json", "-c", "mini.yaml", "-c", "model.set_cache_control=null", "-c", "model.model_kwargs.timeout=120", "-c", "model.model_kwargs.num_retries=2"]
 output_mode: git_diff
 output_parser: unified_diff_auto
 missing_tool_behavior: fail

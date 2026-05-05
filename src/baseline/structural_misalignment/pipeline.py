@@ -13,6 +13,7 @@ from src.baseline.structural_misalignment.parsers.registry import get_linker, ge
 import src.baseline.structural_misalignment.parsers.prompt.deterministic_subtasks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.prompt.llm_subtasks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.cfg_ast  # noqa: F401
+import src.baseline.structural_misalignment.parsers.patch.cfg_ast_scoped  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.llm_chunks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.embedding_similarity  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.llm_grounding  # noqa: F401
@@ -38,6 +39,19 @@ def build_structural_graph(
     prompt_parser = get_prompt_parser(prompt_parser_name)
     patch_parser = get_patch_parser(patch_parser_name)
     linker = get_linker(linker_name)
+    llm_config = config.get("llm") if isinstance(config.get("llm"), dict) else {}
+    provider = str(llm_config.get("provider", config.get("provider", "none")))
+    model = str(llm_config.get("model", config.get("model", "none")))
+    temperature = float(llm_config.get("temperature", config.get("temperature", 0.0)))
+    seed = llm_config.get("seed", config.get("seed"))
+    max_retries = int(llm_config.get("max_retries", config.get("max_retries", 0)))
+    backoff_sec = float(llm_config.get("backoff_sec", config.get("backoff_sec", 0.0)))
+    allow_provider_fallback = bool(
+        llm_config.get(
+            "allow_provider_fallback",
+            config.get("allow_provider_fallback", False),
+        )
+    )
 
     instance_id = str(repo_code.get("instance_id", "unknown"))
     embedding_model_name = str(config.get("embedding_model_name", "microsoft/codebert-base"))
@@ -50,16 +64,16 @@ def build_structural_graph(
         module_name=module_name,
         module_config_hash=module_config_hash,
         fidelity_mode=fidelity_mode,
-        provider=str(config.get("provider", "none")),
-        model=str(config.get("model", "none")),
+        provider=provider,
+        model=model,
         problem_statement=prompt,
         artifact_dir=artifact_root / "subtasks",
-        temperature=float(config.get("temperature", 0.0)),
-        seed=config.get("seed"),
-        max_retries=int(config.get("max_retries", 0)),
-        backoff_sec=float(config.get("backoff_sec", 0.0)),
-        allow_provider_fallback=False,
-        system_prompt=str(config.get("system_prompt", "")),
+        temperature=temperature,
+        seed=seed,
+        max_retries=max_retries,
+        backoff_sec=backoff_sec,
+        allow_provider_fallback=allow_provider_fallback,
+        system_prompt=str(llm_config.get("subtasks_system_prompt", config.get("system_prompt", ""))),
         config=config,
     )
     subtasks = normalize_subtasks(list(subtasks_raw))
@@ -76,17 +90,17 @@ def build_structural_graph(
         module_name=module_name,
         module_config_hash=module_config_hash,
         fidelity_mode=fidelity_mode,
-        provider="none",
-        model="none",
+        provider=provider,
+        model=model,
         problem_statement=prompt,
         subtasks=subtasks,
         candidate_nodes=candidate_nodes,
         artifact_dir=artifact_root / "grounding",
-        temperature=0.0,
-        seed=config.get("seed"),
-        max_retries=0,
-        backoff_sec=0.0,
-        allow_provider_fallback=False,
+        temperature=temperature,
+        seed=seed,
+        max_retries=max_retries,
+        backoff_sec=backoff_sec,
+        allow_provider_fallback=allow_provider_fallback,
         config=config,
     )
 
@@ -123,5 +137,7 @@ def build_structural_graph(
         "artifact_paths": artifact_paths,
         "embedding_model_name": embedding_model_name,
         "embedding_pooling": embedding_pooling,
+        "llm_provider": provider,
+        "llm_model": model,
     }
     return graph_payload, hetero_graph, metadata

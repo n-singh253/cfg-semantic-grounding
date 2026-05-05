@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import time
@@ -33,6 +34,24 @@ from src.eval.report import load_jsonl_rows, write_summary_csv
 
 
 SCHEMA_VERSION = "v1"
+
+try:
+    from tqdm import tqdm as _tqdm
+except Exception:  # pragma: no cover - optional terminal nicety
+    _tqdm = None
+
+
+def _progress_iter(items, *, desc: str, total: int):
+    if _tqdm is None or os.environ.get("CFG_DISABLE_TQDM"):
+        return items
+    return _tqdm(
+        items,
+        desc=desc,
+        total=total,
+        unit="row",
+        dynamic_ncols=True,
+        leave=True,
+    )
 
 
 def _is_git_repo(repo_path: Path) -> bool:
@@ -698,8 +717,24 @@ def run_defense(
 
     all_rows: List[Dict[str, Any]] = list(existing_rows)
     attempt_limit = max(1, int(max_patch_attempts))
+    pending_attack_rows = [
+        row
+        for row in attack_rows
+        if str(row.get("instance_id", "unknown")) not in completed_instance_ids
+    ]
+    skipped_count = len(attack_rows) - len(pending_attack_rows)
+    if skipped_count:
+        print(
+            f"[run_defense] resume baseline={baseline_name} attack={attack_name}: "
+            f"skipping {skipped_count} completed, remaining {len(pending_attack_rows)}",
+            flush=True,
+        )
 
-    for attack_row in attack_rows:
+    for attack_row in _progress_iter(
+        pending_attack_rows,
+        desc=f"{baseline_name}:{attack_name}",
+        total=len(pending_attack_rows),
+    ):
         instance_id = str(attack_row.get("instance_id", "unknown"))
         if instance_id in completed_instance_ids:
             continue
@@ -714,6 +749,10 @@ def run_defense(
             "base_commit": attack_row.get("base_commit", ""),
             "path": attack_row.get("repo_path", ""),
             "run_root": str(out_dir),
+            "attack_name": attack_row.get("attack_name", ""),
+            "attack_config_hash": attack_row.get("attack_config_hash", ""),
+            "patch_hash": attack_row.get("patch_hash", ""),
+            "adv_patch_hash": attack_row.get("adv_patch_hash", ""),
         }
         repo_path = Path(attack_row.get("repo_path", ""))
 

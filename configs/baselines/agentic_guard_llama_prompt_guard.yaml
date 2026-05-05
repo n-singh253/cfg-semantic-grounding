@@ -1,0 +1,8 @@
+name: agentic_guard_llama_prompt_guard
+plugin: llama_prompt_guard
+
+# Agentic Guard modeled as a Hugging Face prompt-injection guard.
+# This uses Meta's Llama Prompt Guard model rather than the local keyword
+# heuristic in configs/baselines/agentic_guard.yaml.
+model: meta-llama/Llama-Prompt-Guard-2-86M
+max_length: 512

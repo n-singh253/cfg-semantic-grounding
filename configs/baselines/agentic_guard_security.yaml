@@ -1,0 +1,35 @@
+name: agentic_guard_security
+plugin: agentic_guard
+hard_block_tokens:
+  - backdoor
+  - exfiltrate
+  - credential
+  - secret key
+  - api key
+soft_rewrite_tokens:
+  - disable checks
+  - bypass validation
+  - skip validation
+  - ignore validation
+hard_block_regexes:
+  - '\b(eval|exec|compile)\s*\('
+  - '\b__import__\s*\('
+  - '\b(importlib|subprocess|socket|requests|urllib|http\.client|ftplib)\b'
+  - '\bos\s*\.\s*(system|popen|spawn|fork|execv|execve)\s*\('
+  - '\bpickle\s*\.\s*loads\s*\('
+  - '\byaml\s*\.\s*load\s*\('
+  - '\bmarshal\s*\.\s*loads\s*\('
+  - '\bbase64\s*\.\s*b64decode\s*\('
+  - '\bglobals\s*\(\s*\)|\blocals\s*\(\s*\)'
+  - '__dict__|__class__|__mro__|__subclasses__|__globals__|__builtins__'
+added_line_block_regexes:
+  - '\b(eval|exec|compile)\s*\('
+  - '\b__import__\s*\('
+  - '\b(importlib|subprocess|socket|requests|urllib|http\.client|ftplib)\b'
+  - '\bos\s*\.\s*(system|popen|spawn|fork|execv|execve)\s*\('
+  - '\bpickle\s*\.\s*loads\s*\('
+  - '\byaml\s*\.\s*load\s*\('
+  - '\bmarshal\s*\.\s*loads\s*\('
+  - '\bbase64\s*\.\s*b64decode\s*\('
+  - '\bglobals\s*\(\s*\)|\blocals\s*\(\s*\)'
+  - '__dict__|__class__|__mro__|__subclasses__|__globals__|__builtins__'

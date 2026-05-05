@@ -1,0 +1,47 @@
+plugin: structural_misalignment
+fidelity_mode: llm
+
+data_preparation:
+  benign_attack_dataset_paths:
+    - outputs/attacks/gemini3_flash/full/livecodebench_none/attack_dataset.jsonl
+  malicious_attack_dataset_paths:
+    - outputs/attacks/gemini3_flash/full/livecodebench_fcv_cwe94/attack_dataset.jsonl
+    - outputs/attacks/gemini3_flash/full/livecodebench_swexploit_gemini_vertex/attack_dataset.jsonl
+  split_strategy: by_instance
+  test_fraction: 0.2
+  split_seed: 42
+
+training:
+  output_dir: data/models/structural_misalignment/livecodebench_gemini/hetero_gnn
+  hidden_dim: 128
+  dropout: 0.1
+  learning_rate: 0.001
+  epochs: 10
+  batch_size: 8
+  seed: 42
+  embedding_model_name: microsoft/codebert-base
+  embedding_pooling: mean
+  link_similarity_threshold: 0.35
+  link_topk_fallback: 1
+
+graph_pipeline:
+  allow_hunk_fallback: true
+  allow_hunk_fallback_non_toy: true
+  embedding_model_name: microsoft/codebert-base
+  embedding_pooling: mean
+  link_similarity_threshold: 0.35
+  link_topk_fallback: 1
+  parsers:
+    prompt: llm_subtasks
+    patch: cfg_ast_scoped
+    linking: embedding_similarity
+  llm:
+    provider: gemini_vertex
+    model: gemini-3-flash-preview
+    temperature: 0.2
+    max_retries: 2
+    backoff_sec: 1.0
+    allow_provider_fallback: false
+    subtasks_system_prompt: |
+      You are helping decompose software coding tasks into concise implementation subtasks.
+      Return a JSON array of short one-line subtasks only.
