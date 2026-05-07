@@ -106,6 +106,33 @@ def _completed_instance_ids(
     return completed
 
 
+def _finalized_instance_ids(
+    final_out: Path,
+    *,
+    dataset: str,
+    agent: str,
+    attack: str,
+    allowed_ids: set[str],
+) -> set[str]:
+    path = final_out / "attack_dataset.jsonl"
+    if not path.exists():
+        return set()
+
+    finalized: set[str] = set()
+    for row in load_jsonl_rows(path):
+        instance_id = str(row.get("instance_id", "") or "")
+        if instance_id not in allowed_ids:
+            continue
+        if str(row.get("dataset", "") or "") != dataset:
+            continue
+        if str(row.get("agent_name", "") or "") != agent:
+            continue
+        if str(row.get("attack_name", "") or "") != attack:
+            continue
+        finalized.add(instance_id)
+    return finalized
+
+
 def _unique_paths(paths: List[Path]) -> List[Path]:
     seen: set[str] = set()
     unique: List[Path] = []
@@ -257,8 +284,7 @@ def _finalize_merged_attack_dataset(
     shard_dirs: List[Path],
 ) -> Dict[str, Any]:
     """Finalize all compatible merged rows, including rows from resumed config hashes."""
-    rows = []
-    seen_instance_ids: set[str] = set()
+    rows_by_instance_id: Dict[str, Dict[str, Any]] = {}
     duplicate_instances = 0
     for row in load_jsonl_rows(out_dir / "attack_results.jsonl"):
         if str(row.get("dataset", "") or "") != dataset:
@@ -268,17 +294,17 @@ def _finalize_merged_attack_dataset(
         if str(row.get("attack_name", "") or "") != attack:
             continue
         instance_id = str(row.get("instance_id", "") or "")
-        if instance_id in seen_instance_ids:
+        if instance_id in rows_by_instance_id:
             duplicate_instances += 1
-            continue
-        seen_instance_ids.add(instance_id)
-        rows.append(row)
+        rows_by_instance_id[instance_id] = row
+    rows = list(rows_by_instance_id.values())
 
     finalized_rows: List[Dict[str, Any]] = []
     discard_counts: Counter[str] = Counter()
     running_rows: List[str] = []
     agent_hashes: Counter[str] = Counter()
 
+    progress = tqdm(total=len(rows), desc="finalizing attacks", unit="row", dynamic_ncols=True) if tqdm else None
     for idx, row in enumerate(rows, start=1):
         agent_hashes[str(row.get("agent_config_hash", "") or "")] += 1
         validation = _validate_attack_row(row)
@@ -312,6 +338,16 @@ def _finalize_merged_attack_dataset(
                 sort_keys=True,
             )
         )
+        if progress is not None:
+            progress.update(1)
+        elif idx % 25 == 0 or idx == len(rows):
+            print(
+                f"[shard-runner] finalizing {idx}/{len(rows)} kept={len(finalized_rows)} "
+                f"discarded={sum(discard_counts.values())}",
+                flush=True,
+            )
+    if progress is not None:
+        progress.close()
 
     dataset_text = "\n".join(json.dumps(row, sort_keys=True, ensure_ascii=True) for row in finalized_rows)
     atomic_write_text(out_dir / "attack_dataset.jsonl", dataset_text + ("\n" if dataset_text else ""))
@@ -360,11 +396,18 @@ def main() -> int:
         action="store_true",
         help="Do not scan existing shard outputs before rechunking. By default, completed IDs are skipped globally.",
     )
+    parser.add_argument(
+        "--retry-discarded",
+        action="store_true",
+        help="Resume from the finalized dataset instead of raw shard rows, rerunning instances that were discarded.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     if args.shards < 1 or args.parallel < 1:
         raise SystemExit("--shards and --parallel must be >= 1")
+    if args.retry_discarded and args.no_global_resume:
+        raise SystemExit("--retry-discarded and --no-global-resume are mutually exclusive")
 
     config_dir = Path(args.config_dir)
     ids = _instance_ids(args.dataset, args.split, config_dir, args.limit, args.dataset_data_path)
@@ -376,7 +419,15 @@ def main() -> int:
 
     existing_shard_dirs = _matching_existing_shard_dirs(shard_base, args.dataset, args.attack)
     completed_ids: set[str] = set()
-    if not args.no_global_resume:
+    if args.retry_discarded:
+        completed_ids = _finalized_instance_ids(
+            final_out,
+            dataset=args.dataset,
+            agent=args.agent,
+            attack=args.attack,
+            allowed_ids=set(ids),
+        )
+    elif not args.no_global_resume:
         completed_ids = _completed_instance_ids(
             existing_shard_dirs,
             dataset=args.dataset,
@@ -427,6 +478,7 @@ def main() -> int:
         "completed_instances_skipped": len(completed_ids),
         "pending_instances": len(pending_ids),
         "global_resume_enabled": not args.no_global_resume,
+        "retry_discarded": args.retry_discarded,
         "dataset_data_path": args.dataset_data_path or "",
         "shards": len(chunks),
         "parallel": args.parallel,

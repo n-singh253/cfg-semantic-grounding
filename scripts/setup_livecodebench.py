@@ -20,7 +20,7 @@ from typing import Any, Dict, Iterable, List
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
-REPOS_ROOT = Path.home() / "livecodebench_repos"
+DEFAULT_REPOS_ROOT = Path.home() / "livecodebench_repos"
 PRIVATE_ROOT = DATA_DIR / "livecodebench_private"
 
 
@@ -314,7 +314,13 @@ def _write_repo(repo_path: Path, row: Dict[str, Any], public_cases: List[Dict[st
     return result.stdout.strip()
 
 
-def build_rows(dataset: Iterable[Dict[str, Any]], release: str, out_path: Path, limit: int | None) -> int:
+def build_rows(
+    dataset: Iterable[Dict[str, Any]],
+    release: str,
+    out_path: Path,
+    limit: int | None,
+    repos_root: Path,
+) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     private_dir = PRIVATE_ROOT / release
     private_dir.mkdir(parents=True, exist_ok=True)
@@ -326,7 +332,7 @@ def build_rows(dataset: Iterable[Dict[str, Any]], release: str, out_path: Path, 
             platform = _slug(str(row.get("platform") or "unknown"))
             question_id = _slug(str(row.get("question_id") or row.get("id") or written))
             instance_id = _slug(f"lcb_{release}_{platform}_{question_id}")
-            repo_path = REPOS_ROOT / release / instance_id
+            repo_path = repos_root / release / instance_id
 
             public_cases = _parse_jsonish(row.get("public_test_cases"), [])
             if not isinstance(public_cases, list):
@@ -371,18 +377,24 @@ def main() -> int:
     parser.add_argument("--release", default="release_latest")
     parser.add_argument("--output", default="data/livecodebench_code_generation_lite_release_latest.jsonl")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--repos-root",
+        default=None,
+        help="Optional repo materialization root. Defaults to ~/livecodebench_repos.",
+    )
     args = parser.parse_args()
 
     out_path = Path(args.output)
     if not out_path.is_absolute():
         out_path = ROOT / out_path
 
+    repos_root = Path(args.repos_root).expanduser() if args.repos_root else DEFAULT_REPOS_ROOT
     print(f"[1/2] Loading LiveCodeBench code_generation_lite ({args.release})")
     ds = _iter_dataset_rows(args.release, args.limit)
     print(f"[2/2] Writing harness rows to {out_path}")
-    written = build_rows(ds, args.release, out_path, args.limit)
+    written = build_rows(ds, args.release, out_path, args.limit, repos_root)
     print(f"       Wrote {written} rows")
-    print(f"       Repos: {REPOS_ROOT / args.release}")
+    print(f"       Repos: {repos_root / args.release}")
     print(f"       Private test references: {PRIVATE_ROOT / args.release}")
     return 0
 

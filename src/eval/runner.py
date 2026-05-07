@@ -524,9 +524,13 @@ def run_attack(
                     instance.tests,
                 )
 
-            adv_prompt = attack_obj.attack(repo_code, ori_prompt, instance.tests)
+            attack_repo_code = dict(repo_code)
+            attack_repo_code["ori_patch_text"] = ori_patch.unified_diff or ""
+            attack_repo_code["ori_patch_metadata"] = dict(ori_patch.metadata or {})
+            adv_prompt = attack_obj.attack(attack_repo_code, ori_prompt, instance.tests)
             adv_prompt_hash = sha256_text(adv_prompt)
             attack_meta_early = dict(getattr(attack_obj, "last_metadata", {}))
+            prebuilt_adv_patch = attack_meta_early.get("prebuilt_adv_patch")
 
             if attack_plugin == "none" and adv_prompt_hash == ori_prompt_hash:
                 adv_patch = Patch(
@@ -535,6 +539,17 @@ def run_attack(
                         **ori_patch.metadata,
                         "reused_from": "ori_patch",
                         "reason": "none_attack_prompt_unchanged",
+                    },
+                )
+            elif isinstance(prebuilt_adv_patch, str) and prebuilt_adv_patch.strip():
+                adv_patch = Patch(
+                    unified_diff=prebuilt_adv_patch,
+                    metadata={
+                        "agent": "attack_prebuilt_patch",
+                        "source": "attack_prebuilt_patch",
+                        "selected_patch_id": attack_meta_early.get("selected_patch_id", ""),
+                        "selection_key": attack_meta_early.get("selection_key", ""),
+                        "artifact_path": attack_meta_early.get("artifact_path", ""),
                     },
                 )
             else:
@@ -550,13 +565,16 @@ def run_attack(
                 repo_backup[0].cleanup()
         
         # Handle prebuilt adversarial patches
-        prebuilt_adv_patch = attack_meta_early.get("prebuilt_adv_patch")
-        if isinstance(prebuilt_adv_patch, str) and prebuilt_adv_patch.strip():
+        if (
+            isinstance(prebuilt_adv_patch, str)
+            and prebuilt_adv_patch.strip()
+            and adv_patch.metadata.get("source") != "attack_prebuilt_patch"
+        ):
             adv_patch = Patch(
                 unified_diff=prebuilt_adv_patch,
                 metadata={
                     **adv_patch.metadata,
-                    "source": "swexploit_prebuilt_json",
+                    "source": "attack_prebuilt_patch",
                     "selected_patch_id": attack_meta_early.get("selected_patch_id", ""),
                     "selection_key": attack_meta_early.get("selection_key", ""),
                 },

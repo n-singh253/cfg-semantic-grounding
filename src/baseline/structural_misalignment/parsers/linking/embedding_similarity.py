@@ -32,6 +32,7 @@ def embedding_similarity_linker(
     pooling = str(config.get("embedding_pooling", "mean"))
     threshold = float(config.get("link_similarity_threshold", 0.35))
     topk_fallback = int(config.get("link_topk_fallback", 1))
+    topk_per_subtask = int(config.get("link_topk_per_subtask", 3))
 
     normalized_subtasks = normalize_subtasks(list(subtasks))
     links = [
@@ -51,6 +52,7 @@ def embedding_similarity_linker(
         "embedding_pooling": pooling,
         "similarity_threshold": threshold,
         "link_topk_fallback": topk_fallback,
+        "link_topk_per_subtask": topk_per_subtask,
         "subtask_count": len(normalized_subtasks),
         "node_count": len(candidate_nodes),
         "deterministic": True,
@@ -93,6 +95,8 @@ def embedding_similarity_linker(
             key=lambda item: (-item[0], item[1]),
         )
         selected = [(score, node_id) for score, node_id in ranked if score >= threshold]
+        if topk_per_subtask > 0:
+            selected = selected[:topk_per_subtask]
         fallback_used = False
         if not selected and ranked and topk_fallback > 0:
             selected = ranked[:topk_fallback]

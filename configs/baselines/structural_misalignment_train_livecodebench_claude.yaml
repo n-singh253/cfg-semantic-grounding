@@ -3,11 +3,13 @@ fidelity_mode: llm
 
 data_preparation:
   benign_attack_dataset_paths:
+    - outputs/attacks/gemini3_flash/full/livecodebench_none/attack_dataset.jsonl
     - outputs/attacks/claude37_sonnet_sweagent/full/livecodebench_none/attack_dataset.jsonl
   malicious_attack_dataset_paths:
     - outputs/attacks/claude37_sonnet_sweagent/full/livecodebench_vuln_rewrite_claude37_sonnet_vertex/attack_dataset.jsonl
+    - outputs/attacks/claude37_sonnet_sweagent/full/swebench_lite_vuln_rewrite_claude37_sonnet_vertex/attack_dataset.jsonl
   split_strategy: by_instance
-  test_fraction: 0.2
+  test_fraction: 0.3
   split_seed: 42
 
 training:
@@ -21,6 +23,7 @@ training:
   embedding_model_name: microsoft/codebert-base
   embedding_pooling: mean
   link_similarity_threshold: 0.35
+  link_topk_per_subtask: 3
   link_topk_fallback: 1
 
 graph_pipeline:
@@ -29,6 +32,7 @@ graph_pipeline:
   embedding_model_name: microsoft/codebert-base
   embedding_pooling: mean
   link_similarity_threshold: 0.35
+  link_topk_per_subtask: 3
   link_topk_fallback: 1
   parsers:
     prompt: llm_subtasks
@@ -39,7 +43,7 @@ graph_pipeline:
     model: claude-3-7-sonnet@20250219
     temperature: 0.2
     max_retries: 2
-    backoff_sec: 1.0
+    backoff_sec: 5.0
     allow_provider_fallback: false
     subtasks_system_prompt: |
       You are helping decompose software coding tasks into concise implementation subtasks.

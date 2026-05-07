@@ -44,7 +44,9 @@ def _load_patch(row: Dict[str, Any]) -> str:
     for key in ("final_patch_path", "adv_patch_path", "ori_patch_path"):
         candidate = Path(str(patch_artifacts.get(key, "")))
         if candidate.exists():
-            return candidate.read_text(encoding="utf-8", errors="replace").strip()
+            text = candidate.read_text(encoding="utf-8", errors="replace").strip()
+            if text:
+                return text
     validation = row.get("attack_validation", {})
     if isinstance(validation, dict):
         apply_details = validation.get("apply_details", {})
@@ -133,13 +135,20 @@ def _split_rows(rows: List[Dict[str, Any]], split_name: str) -> List[Dict[str, A
     return [row for row in rows if str(row.get("split", "")).strip().lower() == split_name]
 
 
-def _load_rows_from_paths(paths: List[Path], *, graph_label: int | None = None) -> List[Dict[str, Any]]:
+def _load_rows_from_paths(
+    paths: List[Path],
+    *,
+    graph_label: int | None = None,
+    limit: int | None = None,
+) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for path in paths:
         if not path.exists():
             raise FileNotFoundError(f"Finalized attack dataset not found: {path}")
         loaded = load_jsonl_rows(path)
         require_finalized_attack_rows(loaded, path)
+        if limit is not None:
+            loaded = loaded[:limit]
         loaded = [{**row, "source_attack_dataset_path": str(path)} for row in loaded]
         if graph_label is not None:
             loaded = [{**row, "graph_label": int(graph_label)} for row in loaded]
@@ -178,7 +187,11 @@ def _split_rows_by_instance(
     return train_rows, test_rows
 
 
-def _resolve_split_rows(data_config: Dict[str, Any]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def _resolve_split_rows(
+    data_config: Dict[str, Any],
+    *,
+    limit: int | None = None,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     train_benign_paths = _path_list(data_config.get("train_benign_attack_dataset_paths"))
     train_malicious_paths = _path_list(data_config.get("train_malicious_attack_dataset_paths"))
     test_benign_paths = _path_list(data_config.get("test_benign_attack_dataset_paths"))
@@ -190,11 +203,11 @@ def _resolve_split_rows(data_config: Dict[str, Any]) -> tuple[List[Dict[str, Any
                 "Split-specific training requires all four path groups: "
                 "train/test x benign/malicious attack dataset paths."
             )
-        train_rows = _load_rows_from_paths(train_benign_paths, graph_label=0) + _load_rows_from_paths(
-            train_malicious_paths, graph_label=1
+        train_rows = _load_rows_from_paths(train_benign_paths, graph_label=0, limit=limit) + _load_rows_from_paths(
+            train_malicious_paths, graph_label=1, limit=limit
         )
-        test_rows = _load_rows_from_paths(test_benign_paths, graph_label=0) + _load_rows_from_paths(
-            test_malicious_paths, graph_label=1
+        test_rows = _load_rows_from_paths(test_benign_paths, graph_label=0, limit=limit) + _load_rows_from_paths(
+            test_malicious_paths, graph_label=1, limit=limit
         )
         return train_rows, test_rows
 
@@ -209,8 +222,8 @@ def _resolve_split_rows(data_config: Dict[str, Any]) -> tuple[List[Dict[str, Any
             "Training requires either split-specific finalized dataset paths or combined benign/malicious finalized dataset paths."
         )
 
-    benign_rows = _load_rows_from_paths(benign_paths, graph_label=0)
-    malicious_rows = _load_rows_from_paths(malicious_paths, graph_label=1)
+    benign_rows = _load_rows_from_paths(benign_paths, graph_label=0, limit=limit)
+    malicious_rows = _load_rows_from_paths(malicious_paths, graph_label=1, limit=limit)
     train_rows = _split_rows(benign_rows, "train") + _split_rows(malicious_rows, "train")
     test_rows = _split_rows(benign_rows, "test") + _split_rows(malicious_rows, "test")
     if not train_rows or not test_rows:
@@ -287,6 +300,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Train structural misalignment hetero GNN")
     parser.add_argument("--config", required=True, help="Path to training config YAML")
     parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional smoke-test limit: maximum rows to load from each finalized dataset path.",
+    )
+    parser.add_argument(
         "--graph-workers",
         type=int,
         default=None,
@@ -297,7 +316,7 @@ def main() -> int:
     config = load_yaml(Path(args.config))
     data_config = config.get("data_preparation", {}) if isinstance(config.get("data_preparation"), dict) else {}
     train_config = config.get("training", {}) if isinstance(config.get("training"), dict) else {}
-    train_rows, test_rows = _resolve_split_rows(data_config)
+    train_rows, test_rows = _resolve_split_rows(data_config, limit=args.limit)
     if not train_rows or not test_rows:
         raise ValueError("Training requires both original train and test split rows; no re-splitting is allowed.")
 
@@ -311,6 +330,8 @@ def main() -> int:
         graph_config["embedding_pooling"] = train_config["embedding_pooling"]
     if "link_similarity_threshold" in train_config:
         graph_config["link_similarity_threshold"] = train_config["link_similarity_threshold"]
+    if "link_topk_per_subtask" in train_config:
+        graph_config["link_topk_per_subtask"] = train_config["link_topk_per_subtask"]
     if "link_topk_fallback" in train_config:
         graph_config["link_topk_fallback"] = train_config["link_topk_fallback"]
 

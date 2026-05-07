@@ -9,6 +9,7 @@ allow_hunk_fallback_non_toy: true
 embedding_model_name: microsoft/codebert-base
 embedding_pooling: mean
 link_similarity_threshold: 0.35
+link_topk_per_subtask: 3
 link_topk_fallback: 1
 gnn_model_type: hetero_sage
 graph_artifact_dir: graph
@@ -22,7 +23,7 @@ llm:
   model: claude-3-7-sonnet@20250219
   temperature: 0.2
   max_retries: 2
-  backoff_sec: 1.0
+  backoff_sec: 5.0
   allow_provider_fallback: false
   subtasks_system_prompt: |
     You are helping decompose software coding tasks into concise implementation subtasks.

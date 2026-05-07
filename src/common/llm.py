@@ -3,15 +3,31 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 import os
 import shlex
 import time
+import traceback
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from src.common.artifact_store import atomic_write_json, atomic_write_text
 from src.common.hashing import sha256_json, sha256_text
+
+
+def _provider_call_process_worker(queue: Any, kwargs: Dict[str, Any]) -> None:
+    try:
+        client = LLMClient(Path(os.environ.get("CFG_LLM_SUBPROCESS_CACHE_ROOT", "/tmp/cfg-llm-provider-call")))
+        queue.put({"ok": True, "value": client._provider_call(**kwargs)})
+    except BaseException as exc:  # pragma: no cover - subprocess/provider dependent.
+        queue.put(
+            {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            }
+        )
 
 
 @dataclass
@@ -99,7 +115,7 @@ class LLMClient:
         for attempt in range(max_retries + 1):
             call_count += 1
             try:
-                text, usage = self._provider_call(
+                text, usage = self._provider_call_with_hard_timeout(
                     provider=provider,
                     model=model,
                     prompt=prompt,
@@ -155,6 +171,67 @@ class LLMClient:
             f"LLM call failed for {module_kind}:{module_name} after retries. "
             f"provider={provider}, model={model}, error={last_error}"
         )
+
+    def _provider_call_with_hard_timeout(
+        self,
+        *,
+        provider: str,
+        model: str,
+        prompt: str,
+        temperature: float,
+        seed: Optional[int],
+    ) -> tuple[str, Dict[str, Any]]:
+        timeout_sec = self._hard_timeout_seconds(provider)
+        call_kwargs = {
+            "provider": provider,
+            "model": model,
+            "prompt": prompt,
+            "temperature": temperature,
+            "seed": seed,
+        }
+        if timeout_sec <= 0:
+            return self._provider_call(
+                **call_kwargs,
+            )
+
+        methods = mp.get_all_start_methods()
+        context = mp.get_context("fork" if "fork" in methods else methods[0])
+        queue: Any = context.Queue(maxsize=1)
+        process = context.Process(target=_provider_call_process_worker, args=(queue, call_kwargs))
+        process.start()
+        try:
+            process.join(timeout_sec)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(5)
+                raise TimeoutError(f"LLM provider call exceeded hard timeout of {timeout_sec:g}s")
+            if queue.empty():
+                raise RuntimeError(f"LLM provider subprocess exited without a result; exitcode={process.exitcode}")
+            result = queue.get()
+            if not result.get("ok"):
+                error = str(result.get("error", "unknown subprocess error"))
+                tb = str(result.get("traceback", ""))[:2000]
+                raise RuntimeError(f"LLM provider subprocess failed: {error}\n{tb}")
+            value = result["value"]
+            return value[0], value[1]
+        finally:
+            queue.cancel_join_thread()
+            queue.close()
+
+    @staticmethod
+    def _hard_timeout_seconds(provider: str) -> float:
+        normalized = provider.strip().upper().replace("-", "_")
+        provider_key = f"CFG_{normalized}_HARD_TIMEOUT_SEC"
+        raw_value = os.environ.get(provider_key) or os.environ.get("CFG_LLM_HARD_TIMEOUT_SEC")
+        if not raw_value:
+            return 0.0
+        try:
+            return max(0.0, float(raw_value))
+        except ValueError:
+            return 0.0
 
     @staticmethod
     def _is_blocked_text(text: str) -> bool:

@@ -127,22 +127,33 @@ def cfg_ast_scoped_parser(
                     "after": cfg_after.get("stats", {}),
                 }
 
-                # Risk analysis using line-level patch data
-                patched_lines = parse_patch_lines(patch_text)
-                coverage_data = kwargs.get("coverage_data")
-                risk_result = analyze_node_risk(candidates, patched_lines, coverage_data)
-                diagnostics["risk_analysis"] = risk_result.get("summary", {})
-                diagnostics["risk_features"] = compute_risk_features(risk_result)
+                before_stats = diagnostics["scoped_stats"]["before"]
+                after_stats = diagnostics["scoped_stats"]["after"]
+                before_ok = int(before_stats.get("successful_files", 0))
+                after_ok = int(after_stats.get("successful_files", 0))
+                if not candidates or before_ok == 0 or after_ok == 0:
+                    diagnostics["fallback_reason"] = (
+                        "scoped_cfg_empty_or_parse_failed:"
+                        f" candidates={len(candidates)} before_ok={before_ok} after_ok={after_ok}"
+                    )
+                else:
+                    # Risk analysis using line-level patch data
+                    patched_lines = parse_patch_lines(patch_text)
+                    coverage_data = kwargs.get("coverage_data")
+                    risk_result = analyze_node_risk(candidates, patched_lines, coverage_data)
+                    diagnostics["risk_analysis"] = risk_result.get("summary", {})
+                    diagnostics["risk_features"] = compute_risk_features(risk_result)
 
-                # Annotate candidate nodes with risk scores
-                risk_scores = risk_result.get("risk_scores", {})
-                for node in candidates:
-                    node_id = str(node.get("node_id", ""))
-                    node["risk_score"] = risk_scores.get(node_id, 0.0)
+                    # Annotate candidate nodes with risk scores
+                    risk_scores = risk_result.get("risk_scores", {})
+                    for node in candidates:
+                        node_id = str(node.get("node_id", ""))
+                        node["risk_score"] = risk_scores.get(node_id, 0.0)
 
-                return cfg_diff, candidates, diagnostics
+                    return cfg_diff, candidates, diagnostics
 
-            diagnostics["fallback_reason"] = f"patch_apply_failed: {apply_msg}"
+            else:
+                diagnostics["fallback_reason"] = f"patch_apply_failed: {apply_msg}"
         except Exception as exc:
             diagnostics["fallback_reason"] = f"cfg_diff_exception: {type(exc).__name__}: {exc}"
         finally:

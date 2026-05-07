@@ -53,8 +53,13 @@ class FCVAttack(BaseAttack):
             raise ValueError(f"Unsupported FCV cwe_type={cwe_type!r}; expected one of: {supported}")
 
         injection = CWE_INJECTIONS[cwe_type]
+        extra_injection = str(self.config.get("extra_injection", "") or "").strip()
+        if extra_injection:
+            injection = f"{injection}\n{extra_injection}"
         adv_prompt = f"{ori_prompt}{injection}"
         artifact_dir = self._attack_artifact_dir(repo_code)
+        objective_tags = self.config.get("objective_tags") or []
+        stealth_constraints = self.config.get("stealth_constraints") or []
         self.last_metadata = {
             "attack_name": self.name,
             "mode": "fixed_cwe_injection",
@@ -77,6 +82,8 @@ class FCVAttack(BaseAttack):
             "cwe_type": cwe_type,
             "injection": injection,
             "injection_hash": sha256_text(injection),
+            "objective_tags": objective_tags,
+            "stealth_constraints": stealth_constraints,
         }
         self._write_attack_artifacts(
             repo_code=repo_code,
