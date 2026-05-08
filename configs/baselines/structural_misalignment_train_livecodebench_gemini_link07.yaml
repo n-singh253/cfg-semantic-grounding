@@ -13,7 +13,7 @@ data_preparation:
   split_seed: 42
 
 training:
-  output_dir: data/models/structural_misalignment/livecodebench_claude37_sonnet_sweagent/hetero_gnn
+  output_dir: data/models/structural_misalignment/livecodebench_gemini/hetero_gnn_link07
   hidden_dim: 128
   dropout: 0.1
   learning_rate: 0.001
@@ -22,7 +22,7 @@ training:
   seed: 42
   embedding_model_name: microsoft/codebert-base
   embedding_pooling: mean
-  link_similarity_threshold: 0.35
+  link_similarity_threshold: 0.7
   link_topk_per_subtask: 3
   link_topk_fallback: 1
 
@@ -32,7 +32,7 @@ graph_pipeline:
   fallback_to_deterministic_subtasks_on_llm_failure: true
   embedding_model_name: microsoft/codebert-base
   embedding_pooling: mean
-  link_similarity_threshold: 0.35
+  link_similarity_threshold: 0.7
   link_topk_per_subtask: 3
   link_topk_fallback: 1
   parsers:
@@ -40,8 +40,8 @@ graph_pipeline:
     patch: cfg_ast_scoped
     linking: embedding_similarity
   llm:
-    provider: anthropic_vertex
-    model: claude-3-7-sonnet@20250219
+    provider: gemini_vertex
+    model: gemini-3-flash-preview
     temperature: 0.2
     max_retries: 2
     backoff_sec: 5.0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -14,6 +15,7 @@ from src.common.llm import LLMClient
 from src.eval.attack_finalize import require_finalized_attack_rows
 from src.eval.report import load_jsonl_rows
 from src.baseline.structural_misalignment.graph.cache import structural_graph_key
+from src.baseline.structural_misalignment.graph.build import build_pyg_heterodata
 from src.baseline.structural_misalignment.models.train import train_graph_model
 from src.baseline.structural_misalignment.pipeline import build_structural_graph
 
@@ -21,6 +23,10 @@ try:
     from tqdm import tqdm
 except Exception:  # pragma: no cover - optional progress dependency.
     tqdm = None
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _load_prompt(row: Dict[str, Any]) -> str:
@@ -72,27 +78,81 @@ def _build_graphs(
     artifact_root.mkdir(parents=True, exist_ok=True)
     graph_config_hash = config_hash(config)
 
-    def build_one(row: Dict[str, Any]) -> tuple[Any, Dict[str, Any]]:
-        prompt = _load_prompt(row)
-        patch_text = _load_patch(row)
-        graph_key = structural_graph_key(row)
-        graph_payload, hetero_graph, metadata = build_structural_graph(
-            prompt=prompt,
-            patch_text=patch_text,
-            repo_code={
-                "instance_id": row.get("instance_id", "unknown"),
-                "path": row.get("repo_path", ""),
-                "dataset": row.get("dataset", ""),
-                "split": row.get("split", ""),
+    def load_existing_graph(row: Dict[str, Any], graph_key: str) -> tuple[Any, Dict[str, Any]] | None:
+        if bool(config.get("rebuild_deterministic_subtask_fallbacks", False)) or _env_flag(
+            "CFG_REBUILD_SUBTASK_FALLBACK_GRAPHS"
+        ):
+            fallback_metadata = artifact_root / graph_key / "subtasks" / "fallback_metadata.json"
+            if fallback_metadata.exists():
+                return None
+
+        graph_dir = artifact_root / graph_key / "graph"
+        graph_json = graph_dir / "graph.json"
+        graph_pt = graph_dir / "graph.pt"
+        if not graph_json.exists():
+            return None
+
+        graph_payload = json.loads(graph_json.read_text(encoding="utf-8"))
+        hetero_graph = None
+        if graph_pt.exists():
+            try:
+                import torch
+
+                hetero_graph = torch.load(graph_pt, map_location="cpu", weights_only=False)
+            except Exception:
+                hetero_graph = None
+        if hetero_graph is None:
+            hetero_graph = build_pyg_heterodata(graph_payload)
+
+        manifest_row = {
+            "instance_id": row.get("instance_id", "unknown"),
+            "split": row.get("split", ""),
+            "graph_label": int(row.get("graph_label", 0)),
+            "attack_name": row.get("attack_name", ""),
+            "patch_hash": row.get("patch_hash", ""),
+            "source_attack_dataset_path": row.get("source_attack_dataset_path", ""),
+            "graph_key": graph_key,
+            "graph_artifacts": {
+                "graph_json": str(graph_json),
+                **({"graph_pt": str(graph_pt)} if graph_pt.exists() else {}),
             },
-            config=config,
-            artifact_root=artifact_root / graph_key,
-            llm_client=llm_client,
-            module_name="structural_misalignment_train",
-            module_config_hash=graph_config_hash,
-            fidelity_mode=fidelity_mode,
-            graph_label=int(row.get("graph_label", 0)),
-        )
+            "cache_hit": True,
+        }
+        return hetero_graph, manifest_row
+
+    def build_one(row: Dict[str, Any]) -> tuple[Any, Dict[str, Any]]:
+        graph_key = structural_graph_key(row)
+        existing = load_existing_graph(row, graph_key)
+        if existing is not None:
+            return existing
+
+        try:
+            prompt = _load_prompt(row)
+            patch_text = _load_patch(row)
+            graph_payload, hetero_graph, metadata = build_structural_graph(
+                prompt=prompt,
+                patch_text=patch_text,
+                repo_code={
+                    "instance_id": row.get("instance_id", "unknown"),
+                    "path": row.get("repo_path", ""),
+                    "dataset": row.get("dataset", ""),
+                    "split": row.get("split", ""),
+                },
+                config=config,
+                artifact_root=artifact_root / graph_key,
+                llm_client=llm_client,
+                module_name="structural_misalignment_train",
+                module_config_hash=graph_config_hash,
+                fidelity_mode=fidelity_mode,
+                graph_label=int(row.get("graph_label", 0)),
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to build structural graph for "
+                f"instance_id={row.get('instance_id', 'unknown')} "
+                f"graph_key={graph_key} "
+                f"source={row.get('source_attack_dataset_path', '')}"
+            ) from exc
         manifest_row = {
             "instance_id": row.get("instance_id", "unknown"),
             "split": row.get("split", ""),
@@ -102,16 +162,31 @@ def _build_graphs(
             "source_attack_dataset_path": row.get("source_attack_dataset_path", ""),
             "graph_key": graph_key,
             "graph_artifacts": metadata.get("artifact_paths", {}),
+            "cache_hit": False,
         }
         return hetero_graph, manifest_row
 
     graphs: List[Any] = []
     manifest: List[Dict[str, Any]] = []
+    rows_to_build: List[Dict[str, Any]] = []
+    cache_iterator = rows
+    if tqdm is not None:
+        cache_iterator = tqdm(rows, desc=f"load-graph-cache:{artifact_root.name}", unit="graph")
+    for row in cache_iterator:
+        graph_key = structural_graph_key(row)
+        existing = load_existing_graph(row, graph_key)
+        if existing is None:
+            rows_to_build.append(row)
+            continue
+        hetero_graph, manifest_row = existing
+        graphs.append(hetero_graph)
+        manifest.append(manifest_row)
+
     worker_count = max(1, int(workers))
-    if worker_count == 1 or len(rows) <= 1:
-        iterator = rows
+    if worker_count == 1 or len(rows_to_build) <= 1:
+        iterator = rows_to_build
         if tqdm is not None:
-            iterator = tqdm(rows, desc=f"build-graphs:{artifact_root.name}", unit="graph")
+            iterator = tqdm(rows_to_build, desc=f"build-graphs:{artifact_root.name}", unit="graph")
         for row in iterator:
             hetero_graph, manifest_row = build_one(row)
             graphs.append(hetero_graph)
@@ -119,7 +194,7 @@ def _build_graphs(
     else:
         futures = []
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            futures = [executor.submit(build_one, row) for row in rows]
+            futures = [executor.submit(build_one, row) for row in rows_to_build]
             iterator = as_completed(futures)
             if tqdm is not None:
                 iterator = tqdm(iterator, total=len(futures), desc=f"build-graphs:{artifact_root.name}", unit="graph")

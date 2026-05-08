@@ -29,6 +29,7 @@ training:
 graph_pipeline:
   allow_hunk_fallback: true
   allow_hunk_fallback_non_toy: true
+  fallback_to_deterministic_subtasks_on_llm_failure: true
   embedding_model_name: microsoft/codebert-base
   embedding_pooling: mean
   link_similarity_threshold: 0.35

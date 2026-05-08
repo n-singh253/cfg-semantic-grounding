@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from src.baseline.structural_misalignment.grounding.schemas import split_problem_statement
 from src.baseline.structural_misalignment.grounding.subtasks import (
     DEFAULT_SYSTEM_PROMPT,
     generate_subtasks as _generate_subtasks_impl,
@@ -59,23 +61,53 @@ def llm_subtasks_parser(
         - subtasks: List of subtask strings
         - metadata: Dict with prompt_hash, cache_hit, token_usage, etc.
     """
-    return _generate_subtasks_impl(
-        llm_client=llm_client,
-        instance_id=instance_id,
-        module_name=module_name,
-        module_config_hash=module_config_hash,
-        fidelity_mode=fidelity_mode,
-        provider=provider,
-        model=model,
-        problem_statement=problem_statement,
-        artifact_dir=artifact_dir,
-        temperature=temperature,
-        seed=seed,
-        max_retries=max_retries,
-        backoff_sec=backoff_sec,
-        allow_provider_fallback=allow_provider_fallback,
-        system_prompt=system_prompt,
-    )
+    try:
+        result = _generate_subtasks_impl(
+            llm_client=llm_client,
+            instance_id=instance_id,
+            module_name=module_name,
+            module_config_hash=module_config_hash,
+            fidelity_mode=fidelity_mode,
+            provider=provider,
+            model=model,
+            problem_statement=problem_statement,
+            artifact_dir=artifact_dir,
+            temperature=temperature,
+            seed=seed,
+            max_retries=max_retries,
+            backoff_sec=backoff_sec,
+            allow_provider_fallback=allow_provider_fallback,
+            system_prompt=system_prompt,
+        )
+        fallback_file = artifact_dir / "fallback_metadata.json"
+        if fallback_file.exists():
+            fallback_file.unlink()
+        return result
+    except Exception as exc:
+        config = kwargs.get("config") if isinstance(kwargs.get("config"), dict) else {}
+        fallback_enabled = bool(config.get("fallback_to_deterministic_subtasks_on_llm_failure", False))
+        if not fallback_enabled:
+            raise
+
+        chunks = split_problem_statement(problem_statement)
+        subtasks = chunks[:12] if chunks else ["Read changed code", "Map changes to requested behavior"]
+        metadata: Dict[str, Any] = {
+            "parser": "llm_subtasks",
+            "fallback_used": True,
+            "fallback_parser": "deterministic_subtasks",
+            "fallback_reason": f"{type(exc).__name__}: {exc}",
+            "provider": provider,
+            "model": model,
+            "cache_hit": False,
+            "call_count": max_retries + 1,
+            "parsed_subtasks_count": len(subtasks),
+        }
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "fallback_metadata.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        return subtasks, metadata
 
 
 # Register as default prompt parser
