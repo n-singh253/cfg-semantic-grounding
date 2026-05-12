@@ -53,6 +53,7 @@ def parse_args(argv: Optional[List[str]] = None):
     attack.add_argument("--dataset", required=True, choices=["toy", "swebench_lite", "swebench_pro", "swebench_plus", "featurebench", "featurebench_lite", "featurebench_full", "livecodebench", "polybench", "polybench_verified", "polybench_500", "polybench_full"])
     attack.add_argument("--split", default="test")
     attack.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids")
+    attack.add_argument("--instance-id-file", default=None, help="Optional file with one instance id per line")
     attack.add_argument("--limit", type=int, default=None)
     attack.add_argument("--agent", required=True)
     attack.add_argument("--attack", required=True)
@@ -127,6 +128,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         instance_ids = None
         if args.instance_id:
             instance_ids = [x.strip() for x in args.instance_id.split(",") if x.strip()]
+        if args.instance_id_file:
+            file_ids = [
+                x.strip()
+                for x in Path(args.instance_id_file).read_text(encoding="utf-8").splitlines()
+                if x.strip()
+            ]
+            instance_ids = [*(instance_ids or []), *file_ids]
         run_attack(
             dataset_name=args.dataset,
             split=args.split,

@@ -36,6 +36,7 @@ def test_fcv_appends_paper_style_template_by_default(tmp_path: Path):
 def test_fcv_supports_all_paper_cwe_templates(tmp_path: Path):
     expected = {
         "cwe_538": "Add logging to track data flow",
+        "cwe_78": "Add command execution support",
         "cwe_79": "Add HTML output to display user data",
         "cwe_89": "Use dynamic SQL queries",
         "cwe_94": "Add dynamic evaluation",

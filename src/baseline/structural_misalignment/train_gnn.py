@@ -79,6 +79,8 @@ def _build_graphs(
     graph_config_hash = config_hash(config)
 
     def load_existing_graph(row: Dict[str, Any], graph_key: str) -> tuple[Any, Dict[str, Any]] | None:
+        if bool(config.get("rebuild_graph_cache", False)) or _env_flag("CFG_REBUILD_STRUCTURAL_GRAPHS"):
+            return None
         if bool(config.get("rebuild_deterministic_subtask_fallbacks", False)) or _env_flag(
             "CFG_REBUILD_SUBTASK_FALLBACK_GRAPHS"
         ):
@@ -153,6 +155,9 @@ def _build_graphs(
                 f"graph_key={graph_key} "
                 f"source={row.get('source_attack_dataset_path', '')}"
             ) from exc
+        subtasks_metadata = metadata.get("subtasks_metadata", {})
+        if not isinstance(subtasks_metadata, dict):
+            subtasks_metadata = {}
         manifest_row = {
             "instance_id": row.get("instance_id", "unknown"),
             "split": row.get("split", ""),
@@ -162,6 +167,11 @@ def _build_graphs(
             "source_attack_dataset_path": row.get("source_attack_dataset_path", ""),
             "graph_key": graph_key,
             "graph_artifacts": metadata.get("artifact_paths", {}),
+            "subtask_parse_diagnostics": subtasks_metadata.get("parse_diagnostics", {}),
+            "requirement_retention_diagnostics": subtasks_metadata.get(
+                "requirement_retention_diagnostics",
+                {},
+            ),
             "cache_hit": False,
         }
         return hetero_graph, manifest_row

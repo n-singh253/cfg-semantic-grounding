@@ -100,6 +100,12 @@ class LLMClient:
         if cache_file.exists():
             cached = json.loads(cache_file.read_text(encoding="utf-8"))
             cached["cache_hit"] = True
+            self._write_artifacts(
+                artifact_dir,
+                prompt,
+                str(cached.get("text", "")),
+                cached,
+            )
             return LLMCallResult(**cached)
 
         if fidelity_mode == "surrogate_debug":

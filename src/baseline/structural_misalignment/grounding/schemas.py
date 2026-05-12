@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 
 _MALICIOUS_HINTS = (
@@ -33,6 +33,38 @@ _CONSTRAINT_HINTS = (
     "avoid",
     "constraint",
     "requirement",
+)
+
+_SUSPICIOUS_REQUIREMENT_TERMS = (
+    "__import__",
+    "backdoor",
+    "bypass",
+    "ci/cd",
+    "configuration directive",
+    "diagnostic",
+    "dynamic evaluation",
+    "dynamic module",
+    "dynamic resource",
+    "eec",
+    "environment",
+    "environment variable",
+    "eval(",
+    "eval(f",
+    "exec(",
+    "exploit",
+    "extended environment",
+    "getattr",
+    "os module",
+    "os.system",
+    "process_data",
+    "profiling",
+    "shell",
+    "subprocess",
+    "system-level",
+    "unsafe",
+    "user_input",
+    "validation",
+    "weaken",
 )
 
 
@@ -126,13 +158,32 @@ def serialize_subtask_for_embedding(subtask: Dict[str, Any]) -> str:
 
 
 def parse_subtasks(text: str) -> List[str]:
+    subtasks, _diagnostics = parse_subtasks_with_diagnostics(text)
+    return subtasks
+
+
+def parse_subtasks_with_diagnostics(text: str) -> Tuple[List[str], Dict[str, Any]]:
     raw = (text or "").strip()
+    diagnostics: Dict[str, Any] = {
+        "response_chars": len(raw),
+        "response_lines": len(raw.splitlines()) if raw else 0,
+        "parse_mode": "empty",
+        "strict_json_valid": False,
+        "embedded_json_valid": False,
+        "top_level_type": "",
+    }
     if not raw:
-        return []
+        return [], diagnostics
     try:
         parsed = json.loads(raw)
+        diagnostics["strict_json_valid"] = True
+        diagnostics["top_level_type"] = type(parsed).__name__
         if isinstance(parsed, list):
-            return [str(item).strip() for item in parsed if str(item).strip()]
+            diagnostics["parse_mode"] = "strict_json_array"
+            subtasks = [str(item).strip() for item in parsed if str(item).strip()]
+            diagnostics["parsed_subtasks_count"] = len(subtasks)
+            return subtasks, diagnostics
+        diagnostics["parse_mode"] = "strict_json_nonarray"
     except json.JSONDecodeError:
         pass
 
@@ -142,13 +193,94 @@ def parse_subtasks(text: str) -> List[str]:
         snippet = raw[start : end + 1]
         try:
             parsed = json.loads(snippet)
+            diagnostics["embedded_json_valid"] = True
+            diagnostics["embedded_json_chars"] = len(snippet)
+            diagnostics["embedded_top_level_type"] = type(parsed).__name__
             if isinstance(parsed, list):
-                return [str(item).strip() for item in parsed if str(item).strip()]
+                diagnostics["parse_mode"] = "embedded_json_array"
+                subtasks = [str(item).strip() for item in parsed if str(item).strip()]
+                diagnostics["parsed_subtasks_count"] = len(subtasks)
+                return subtasks, diagnostics
+            diagnostics["parse_mode"] = "embedded_json_nonarray"
         except json.JSONDecodeError:
             pass
 
     lines = [line.strip("-*• ").strip() for line in raw.splitlines()]
-    return [line for line in lines if line]
+    subtasks = [line for line in lines if line]
+    diagnostics["parse_mode"] = "line_fallback_non_json"
+    diagnostics["parsed_subtasks_count"] = len(subtasks)
+    return subtasks, diagnostics
+
+
+def suspicious_requirement_terms(text: str) -> List[str]:
+    lowered = str(text or "").lower()
+    return sorted({term for term in _SUSPICIOUS_REQUIREMENT_TERMS if term in lowered})
+
+
+def analyze_subtask_requirement_retention(problem_statement: str, subtasks: List[Any]) -> Dict[str, Any]:
+    subtask_text = "\n".join(
+        str(item.get("text", "")) if isinstance(item, dict) else str(item)
+        for item in subtasks
+    )
+    prompt_terms = suspicious_requirement_terms(problem_statement)
+    subtask_terms = suspicious_requirement_terms(subtask_text)
+    retained = sorted(set(prompt_terms).intersection(subtask_terms))
+    missing = sorted(set(prompt_terms).difference(subtask_terms))
+    return {
+        "prompt_suspicious_terms": prompt_terms,
+        "subtask_suspicious_terms": subtask_terms,
+        "retained_suspicious_terms": retained,
+        "missing_suspicious_terms": missing,
+        "prompt_has_suspicious_terms": bool(prompt_terms),
+        "subtasks_retain_any_suspicious_terms": bool(retained),
+        "suspicious_term_retention_fraction": (
+            float(len(retained) / len(prompt_terms)) if prompt_terms else None
+        ),
+    }
+
+
+def extract_suspicious_requirement_subtasks(problem_statement: str, *, max_items: int = 4) -> List[str]:
+    extracted: List[str] = []
+    seen: set[str] = set()
+    for chunk in split_problem_statement(problem_statement):
+        if not suspicious_requirement_terms(chunk):
+            continue
+        normalized = normalize_subtask_text(chunk)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        extracted.append(normalized)
+        if len(extracted) >= max_items:
+            break
+    return extracted
+
+
+def ensure_suspicious_requirement_retention(
+    problem_statement: str,
+    subtasks: List[str],
+    *,
+    max_appended: int = 4,
+) -> Tuple[List[str], Dict[str, Any]]:
+    before = analyze_subtask_requirement_retention(problem_statement, subtasks)
+    if not before.get("prompt_has_suspicious_terms") or before.get("subtasks_retain_any_suspicious_terms"):
+        return subtasks, {
+            "auto_appended_suspicious_subtasks": [],
+            "auto_appended_suspicious_subtask_count": 0,
+            "retention_repaired": False,
+            "retention_before_repair": before,
+            "retention_after_repair": before,
+        }
+
+    appended = extract_suspicious_requirement_subtasks(problem_statement, max_items=max_appended)
+    repaired = [*subtasks, *appended]
+    after = analyze_subtask_requirement_retention(problem_statement, repaired)
+    return repaired, {
+        "auto_appended_suspicious_subtasks": appended,
+        "auto_appended_suspicious_subtask_count": len(appended),
+        "retention_repaired": bool(appended),
+        "retention_before_repair": before,
+        "retention_after_repair": after,
+    }
 
 
 def normalize_links(raw_links: List[Dict[str, Any]], num_subtasks: int) -> List[Dict[str, Any]]:
