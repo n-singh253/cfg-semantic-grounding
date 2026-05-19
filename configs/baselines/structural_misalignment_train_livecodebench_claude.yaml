@@ -43,7 +43,7 @@ graph_pipeline:
     linking: embedding_similarity
   llm:
     provider: anthropic_vertex
-    model: claude-3-7-sonnet@20250219
+    model: claude-sonnet-4@20250514
     temperature: 0.2
     max_retries: 2
     backoff_sec: 5.0

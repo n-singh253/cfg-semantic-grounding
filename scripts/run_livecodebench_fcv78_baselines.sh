@@ -10,7 +10,7 @@ POLL_INTERVAL_SEC="${POLL_INTERVAL_SEC:-30}"
 DRY_RUN="${DRY_RUN:-0}"
 RUN_GEMINI="${RUN_GEMINI:-1}"
 RUN_CLAUDE="${RUN_CLAUDE:-1}"
-ATTACKS="${ATTACKS:-none fcv_cwe78 swexploit}"
+ATTACKS="${ATTACKS:-fcv_cwe78 swexploit}"
 BASELINES="${BASELINES:-semgrep bandit llm_judge structural_misalignment}"
 
 PROJECT="${GOOGLE_CLOUD_PROJECT:-ucr-ursa-major-congliu-lab}"
@@ -48,7 +48,9 @@ set_gemini_env() {
   export CFG_GEMINI_VERTEX_SAFETY_THRESHOLD="${CFG_GEMINI_VERTEX_SAFETY_THRESHOLD:-BLOCK_NONE}"
   export CFG_GEMINI_VERTEX_MAX_CONCURRENT_CALLS="${CFG_GEMINI_VERTEX_MAX_CONCURRENT_CALLS:-2}"
   export CFG_GEMINI_VERTEX_TIMEOUT_MS="${CFG_GEMINI_VERTEX_TIMEOUT_MS:-90000}"
-  export CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS="${CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS:-4096}"
+  export CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS="${CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS:-512}"
+  export CFG_GEMINI_VERTEX_THINKING_BUDGET="${CFG_GEMINI_VERTEX_THINKING_BUDGET:-0}"
+  export CFG_GEMINI_VERTEX_RESPONSE_MIME_TYPE="${CFG_GEMINI_VERTEX_RESPONSE_MIME_TYPE:-application/json}"
 }
 
 set_claude_env() {
@@ -63,18 +65,16 @@ set_claude_env() {
 attack_dataset() {
   local model_key="$1"
   local attack="$2"
-  local dataset_attack="$attack"
-  if [[ "$attack" == "swexploit" ]]; then
-    dataset_attack="swexploit_gemini_vertex"
-  fi
-  printf '%s/outputs/attacks/%s/full/livecodebench_%s/attack_dataset.jsonl' "$ROOT" "$model_key" "$dataset_attack"
+  local split="$3"
+  printf '%s/outputs/attacks/%s/mixed/livecodebench_none_vs_%s/%s/attack_dataset.jsonl' "$ROOT" "$model_key" "$attack" "$split"
 }
 
 baseline_out() {
   local model_key="$1"
   local baseline="$2"
   local attack="$3"
-  printf '%s/outputs/baselines/livecodebench/%s/%s/%s' "$ROOT" "$model_key" "$baseline" "$attack"
+  local split="$4"
+  printf '%s/outputs/baselines/livecodebench/%s/%s/mixed_none_vs_%s_%s' "$ROOT" "$model_key" "$baseline" "$attack" "$split"
 }
 
 resolved_baseline() {
@@ -110,23 +110,24 @@ run_one() {
   local model_key="$2"
   local attack="$3"
   local baseline_alias="$4"
-  local heldout_file="$5"
   local baseline
   baseline="$(resolved_baseline "$model_family" "$baseline_alias")"
+  local split="full"
+  if [[ "$baseline_alias" == "structural_misalignment" ]]; then
+    split="heldout"
+  fi
   local dataset
-  dataset="$(attack_dataset "$model_key" "$attack")"
+  dataset="$(attack_dataset "$model_key" "$attack" "$split")"
   require_file "$dataset"
-  require_file "$heldout_file"
 
   local out
-  out="$(baseline_out "$model_key" "$baseline" "$attack")"
+  out="$(baseline_out "$model_key" "$baseline" "$attack" "$split")"
   local cmd=(
     "$PYTHON" -u "$ROOT/scripts/run_defense_sharded.py"
     --attack-results "$dataset"
     --baseline "$baseline"
     --fidelity-mode llm
     --out "$out"
-    --instance-id-file "$heldout_file"
     --shards "$SHARDS"
     --parallel "$PARALLEL"
     --stale-timeout-sec "$STALE_TIMEOUT_SEC"
@@ -143,13 +144,28 @@ run_one() {
 run_model() {
   local model_family="$1"
   local model_key="$2"
-  local heldout_file="$3"
   local attack baseline_alias
   for attack in $ATTACKS; do
     for baseline_alias in $BASELINES; do
-      run_one "$model_family" "$model_key" "$attack" "$baseline_alias" "$heldout_file"
+      run_one "$model_family" "$model_key" "$attack" "$baseline_alias"
     done
   done
+}
+
+prepare_mixed_datasets() {
+  local model_family="$1"
+  local model_key="$2"
+  local heldout_file="$3"
+  if [[ "$model_family" == "gemini" ]]; then
+    run_cmd \
+      "$PYTHON" "$ROOT/scripts/build_livecodebench_mixed_eval_datasets.py" \
+      --model-key "$model_key" \
+      --heldout-file "$heldout_file" \
+      --attacks $ATTACKS
+  else
+    echo "[fcv78-baselines] mixed dataset builder currently supports gemini attack naming only" >&2
+    exit 2
+  fi
 }
 
 main() {
@@ -159,18 +175,16 @@ main() {
 
   if [[ "$RUN_GEMINI" == "1" ]]; then
     set_gemini_env
-    run_model \
-      gemini \
-      gemini3_flash \
-      "$ROOT/data/models/structural_misalignment/livecodebench_gemini/hetero_gnn/heldout_instance_ids.txt"
+    gemini_heldout="$ROOT/data/models/structural_misalignment/livecodebench_gemini/hetero_gnn/heldout_instance_ids.txt"
+    prepare_mixed_datasets gemini gemini3_flash "$gemini_heldout"
+    run_model gemini gemini3_flash
   fi
 
   if [[ "$RUN_CLAUDE" == "1" ]]; then
     set_claude_env
-    run_model \
-      claude \
-      claude37_sonnet_sweagent \
-      "$ROOT/data/models/structural_misalignment/livecodebench_claude37_sonnet_sweagent/hetero_gnn/heldout_instance_ids.txt"
+    claude_heldout="$ROOT/data/models/structural_misalignment/livecodebench_claude37_sonnet_sweagent/hetero_gnn/heldout_instance_ids.txt"
+    prepare_mixed_datasets claude claude37_sonnet_sweagent "$claude_heldout"
+    run_model claude claude37_sonnet_sweagent
   fi
 
   echo

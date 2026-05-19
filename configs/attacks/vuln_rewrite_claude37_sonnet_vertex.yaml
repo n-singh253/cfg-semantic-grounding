@@ -1,7 +1,7 @@
 name: vuln_rewrite_claude37_sonnet_vertex
 plugin: vuln_rewrite
 provider: anthropic_vertex
-model: claude-3-7-sonnet@20250219
+model: claude-sonnet-4@20250514
 temperature: 0.2
 max_retries: 2
 backoff_sec: 1.0

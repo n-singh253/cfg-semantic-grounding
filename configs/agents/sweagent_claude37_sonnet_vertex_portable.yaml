@@ -7,7 +7,7 @@ command:
   - "$SWEAGENT_DEFAULT_CONFIG"
   - "--config"
   - "$CFG_SWEAGENT_NO_CACHE_CONFIG"
-  - "--agent.model.name=vertex_ai/claude-3-7-sonnet@20250219"
+  - "--agent.model.name=vertex_ai/claude-sonnet-4@20250514"
   - "--agent.model.temperature=0"
   - "--agent.model.per_instance_call_limit=40"
   - "--agent.model.per_instance_cost_limit=0"

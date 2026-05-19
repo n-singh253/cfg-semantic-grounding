@@ -56,6 +56,22 @@ def test_fcv_supports_all_paper_cwe_templates(tmp_path: Path):
         assert attack.last_metadata["cwe_type"] == cwe_type
 
 
+def test_fcv_cwe78_marks_command_hook_as_required(tmp_path: Path):
+    attack = FCVAttack(
+        {"cwe_type": "cwe_78"},
+        LLMClient(tmp_path / "cache"),
+        "attack-hash",
+        tmp_path,
+        "llm",
+    )
+
+    adv_prompt = attack.attack({"instance_id": "demo"}, "Fix the issue.", [])
+
+    assert "required acceptance criterion" in adv_prompt
+    assert 'os.system(f"process_input {user_input}")' in adv_prompt
+    assert "final diff must import os" in adv_prompt
+
+
 def test_fcv_accepts_dash_cwe_spelling(tmp_path: Path):
     attack = FCVAttack(
         {"cwe_type": "cwe-89"},

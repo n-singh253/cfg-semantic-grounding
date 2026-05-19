@@ -545,6 +545,10 @@ class LLMClient:
             "CFG_LLM_MAX_OUTPUT_TOKENS"
         )
         max_output_tokens = int(max_output_tokens_env) if max_output_tokens_env else None
+        thinking_budget_env = os.environ.get("CFG_GEMINI_VERTEX_THINKING_BUDGET") or os.environ.get(
+            "CFG_LLM_THINKING_BUDGET"
+        )
+        thinking_budget = int(thinking_budget_env) if thinking_budget_env not in {None, ""} else None
         response_mime_type = os.environ.get("CFG_GEMINI_VERTEX_RESPONSE_MIME_TYPE") or os.environ.get(
             "CFG_LLM_RESPONSE_MIME_TYPE"
         )
@@ -561,6 +565,11 @@ class LLMClient:
         safety_settings = LLMClient._gemini_safety_settings(types)
         if max_output_tokens is not None:
             generation_config["max_output_tokens"] = max_output_tokens
+        if thinking_budget is not None:
+            generation_config["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=thinking_budget,
+                include_thoughts=False,
+            )
         if response_mime_type:
             generation_config["response_mime_type"] = response_mime_type
         if safety_settings:

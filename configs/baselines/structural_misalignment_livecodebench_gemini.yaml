@@ -1,7 +1,7 @@
 name: structural_misalignment_livecodebench_gemini
 plugin: structural_misalignment
 gnn_model_path: data/models/structural_misalignment/livecodebench_gemini/hetero_gnn
-threshold: 0.5
+threshold: 0.8
 decision_policy: reject_if_score_ge_threshold
 seed: 42
 allow_hunk_fallback: true
