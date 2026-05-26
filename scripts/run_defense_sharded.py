@@ -45,6 +45,36 @@ def _completed_ids(paths: List[Path], baseline_hash: str) -> set[str]:
     return completed
 
 
+def _runtime_env_snapshot() -> dict:
+    keys = [
+        "GOOGLE_CLOUD_PROJECT",
+        "GOOGLE_CLOUD_LOCATION",
+        "GOOGLE_GENAI_USE_VERTEXAI",
+        "VERTEXAI_PROJECT",
+        "VERTEXAI_LOCATION",
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+        "ANTHROPIC_VERTEX_REGION",
+        "CFG_GEMINI_VERTEX_SAFETY_THRESHOLD",
+        "CFG_GEMINI_VERTEX_MAX_CONCURRENT_CALLS",
+        "CFG_GEMINI_VERTEX_TIMEOUT_MS",
+        "CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS",
+        "CFG_GEMINI_VERTEX_THINKING_BUDGET",
+        "CFG_GEMINI_VERTEX_RESPONSE_MIME_TYPE",
+        "CFG_ANTHROPIC_VERTEX_TIMEOUT_SEC",
+        "CFG_ANTHROPIC_VERTEX_MAX_CONCURRENT_CALLS",
+        "CFG_LLM_MAX_OUTPUT_TOKENS",
+        "CFG_LLM_THINKING_BUDGET",
+        "CFG_LLM_RESPONSE_MIME_TYPE",
+        "CFG_TEST_TIMEOUT_SEC",
+    ]
+    snapshot = {key: os.environ[key] for key in keys if key in os.environ}
+    credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if credentials_path:
+        snapshot["GOOGLE_APPLICATION_CREDENTIALS_SET"] = True
+        snapshot["GOOGLE_APPLICATION_CREDENTIALS_EXISTS"] = Path(credentials_path).expanduser().exists()
+    return snapshot
+
+
 def _result_line_count(path: Path) -> int:
     if not path.exists():
         return 0
@@ -291,6 +321,7 @@ def main() -> int:
 
     baseline_cfg = load_component_config(config_dir, "baselines", args.baseline)
     baseline_hash = config_hash(baseline_cfg)
+    runtime_env = _runtime_env_snapshot()
 
     attack_rows = load_jsonl_rows(attack_results)
     requested_ids: set[str] = set()
@@ -388,6 +419,7 @@ def main() -> int:
                     "returncodes": returncodes,
                     "stale_timeout_sec": int(args.stale_timeout_sec),
                     "isolate_repos": bool(args.isolate_repos),
+                    "runtime_env": runtime_env,
                 },
             )
             print(f"[defense-shards] partial merge={merged} final_results={final_results}", flush=True)
@@ -412,6 +444,7 @@ def main() -> int:
             "isolate_repos": bool(args.isolate_repos),
             "repo_copy_root": str(repo_copy_root) if args.isolate_repos else "",
             "cleanup_repo_copies": bool(args.cleanup_repo_copies),
+            "runtime_env": runtime_env,
         },
     )
     if args.isolate_repos and args.cleanup_repo_copies and repo_copy_root.exists():

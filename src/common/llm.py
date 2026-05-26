@@ -76,6 +76,7 @@ class LLMClient:
         artifact_dir: Path,
         temperature: float = 0.0,
         seed: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
         max_retries: int = 2,
         backoff_sec: float = 1.0,
         allow_provider_fallback: bool = False,
@@ -132,6 +133,7 @@ class LLMClient:
                     prompt=prompt,
                     temperature=temperature,
                     seed=seed,
+                    max_output_tokens=max_output_tokens,
                 )
                 if not (text or "").strip():
                     usage_summary = json.dumps(usage, sort_keys=True)[:1500] if usage else "{}"
@@ -192,6 +194,7 @@ class LLMClient:
         prompt: str,
         temperature: float,
         seed: Optional[int],
+        max_output_tokens: Optional[int],
     ) -> tuple[str, Dict[str, Any]]:
         timeout_sec = self._hard_timeout_seconds(provider)
         call_kwargs = {
@@ -200,6 +203,7 @@ class LLMClient:
             "prompt": prompt,
             "temperature": temperature,
             "seed": seed,
+            "max_output_tokens": max_output_tokens,
         }
         semaphore = self._provider_semaphore(provider)
         if semaphore is not None:
@@ -339,6 +343,7 @@ class LLMClient:
         prompt: str,
         temperature: float,
         seed: Optional[int],
+        max_output_tokens: Optional[int] = None,
     ) -> tuple[str, Dict[str, Any]]:
         normalized = provider.strip().lower()
         if normalized == "openai":
@@ -346,9 +351,14 @@ class LLMClient:
         if normalized == "vllm":
             return self._call_vllm(model=model, prompt=prompt, temperature=temperature, seed=seed)
         if normalized == "gemini":
-            return self._call_gemini(model=model, prompt=prompt, temperature=temperature)
+            return self._call_gemini(model=model, prompt=prompt, temperature=temperature, max_output_tokens=max_output_tokens)
         if normalized in {"gemini_vertex", "vertex", "vertex_ai"}:
-            return self._call_gemini_vertex(model=model, prompt=prompt, temperature=temperature)
+            return self._call_gemini_vertex(
+                model=model,
+                prompt=prompt,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            )
         if normalized == "gemini_cli":
             return self._call_gemini_cli(model=model, prompt=prompt, temperature=temperature)
         if normalized in {"anthropic_vertex", "claude_vertex", "vertex_anthropic"}:
@@ -496,7 +506,13 @@ class LLMClient:
         return settings
 
     @staticmethod
-    def _call_gemini(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+    def _call_gemini(
+        *,
+        model: str,
+        prompt: str,
+        temperature: float,
+        max_output_tokens: Optional[int] = None,
+    ) -> tuple[str, Dict[str, Any]]:
         import google.generativeai as genai  # pragma: no cover - optional dependency.
 
         api_key = os.environ.get("GOOGLE_API_KEY")
@@ -504,10 +520,10 @@ class LLMClient:
             raise RuntimeError("GOOGLE_API_KEY is not set")
         genai.configure(api_key=api_key)
         gen_model = genai.GenerativeModel(model_name=model)
-        resp = gen_model.generate_content(
-            prompt,
-            generation_config={"temperature": temperature},
-        )
+        generation_config: Dict[str, Any] = {"temperature": temperature}
+        if max_output_tokens is not None:
+            generation_config["max_output_tokens"] = max_output_tokens
+        resp = gen_model.generate_content(prompt, generation_config=generation_config)
         usage = {}
         usage_meta = getattr(resp, "usage_metadata", None)
         if usage_meta is not None:
@@ -524,7 +540,13 @@ class LLMClient:
         return text, usage
 
     @staticmethod
-    def _call_gemini_vertex(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+    def _call_gemini_vertex(
+        *,
+        model: str,
+        prompt: str,
+        temperature: float,
+        max_output_tokens: Optional[int] = None,
+    ) -> tuple[str, Dict[str, Any]]:
         from google import genai  # pragma: no cover - optional dependency.
         from google.genai import types  # pragma: no cover - optional dependency.
 
@@ -544,7 +566,8 @@ class LLMClient:
         max_output_tokens_env = os.environ.get("CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS") or os.environ.get(
             "CFG_LLM_MAX_OUTPUT_TOKENS"
         )
-        max_output_tokens = int(max_output_tokens_env) if max_output_tokens_env else None
+        if max_output_tokens is None:
+            max_output_tokens = int(max_output_tokens_env) if max_output_tokens_env else None
         thinking_budget_env = os.environ.get("CFG_GEMINI_VERTEX_THINKING_BUDGET") or os.environ.get(
             "CFG_LLM_THINKING_BUDGET"
         )

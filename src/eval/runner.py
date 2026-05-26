@@ -107,6 +107,28 @@ def _load_configs(
     return configs
 
 
+def _apply_agent_attack_overrides(
+    configs: Dict[str, Dict[str, Any]],
+    *,
+    agent_name: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Apply attack config overrides that are specific to the selected agent."""
+    attack_cfg = configs.get("attack", {})
+    overrides = attack_cfg.get("agent_overrides")
+    if not isinstance(overrides, dict):
+        return configs
+
+    selected = overrides.get(agent_name)
+    if not isinstance(selected, dict):
+        return configs
+
+    merged = dict(attack_cfg)
+    merged.update(selected)
+    configs = dict(configs)
+    configs["attack"] = merged
+    return configs
+
+
 def _tool_availability(agent_cfg: Dict[str, Any]) -> Dict[str, bool]:
     flags = {
         "bandit": command_exists("bandit"),
@@ -373,6 +395,7 @@ def run_attack(
         attack_name=attack_name,
         baseline_name=None,  # Skip baseline loading for attack-only phase
     )
+    configs = _apply_agent_attack_overrides(configs, agent_name=agent_name)
 
     if dataset_data_path:
         configs["dataset"] = dict(configs["dataset"])

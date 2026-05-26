@@ -17,9 +17,9 @@ command:
   - "--env.repo.type=preexisting"
   - "--env.repo.repo_name={repo_path}"
   - "--env.repo.base_commit={base_commit}"
-  - "--problem_statement.type=text"
+  - "--problem_statement.type=text_file"
   - "--problem_statement.id={instance_id}"
-  - "--problem_statement.text={agent_prompt}"
+  - "--problem_statement.path={agent_prompt_file}"
   - "--actions.apply_patch_locally=true"
   - "--output_dir={agent_artifact_dir}/sweagent_output"
 output_mode: git_diff
