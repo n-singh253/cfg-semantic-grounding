@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -16,6 +17,7 @@ from typing import Dict, List
 
 from src.common.artifact_store import atomic_write_json, atomic_write_text
 from src.common.config import config_hash, load_component_config
+from src.common.subprocess import command_exists, run_command
 from src.eval.report import load_jsonl_rows
 
 try:
@@ -239,18 +241,58 @@ def _write_isolated_attack_results(
     shard_repo_root = repo_copy_root / shard_name
     shard_repo_root.mkdir(parents=True, exist_ok=True)
 
+    repo_paths_by_source: Dict[str, Path] = {}
+
+    def repo_key(src_repo: Path) -> str:
+        raw = str(src_repo.resolve())
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+    def repo_label(src_repo: Path) -> str:
+        parts = [part for part in src_repo.parts if part not in {"/", ""}]
+        if len(parts) >= 2:
+            label = "__".join(parts[-2:])
+        else:
+            label = src_repo.name or "repo"
+        return "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in label)
+
+    def materialize_repo_copy(src_repo: Path, instance_id: str) -> Path:
+        key = repo_key(src_repo)
+        existing = repo_paths_by_source.get(key)
+        if existing is not None:
+            return existing
+
+        dst_repo = shard_repo_root / f"{repo_label(src_repo)}__{key}"
+        if refresh_repo_copies and dst_repo.exists():
+            shutil.rmtree(dst_repo)
+        if not dst_repo.exists():
+            if (src_repo / ".git").exists() and command_exists("git"):
+                print(
+                    f"[defense-shards] clone shared repo for shard {shard_name}: {src_repo} -> {dst_repo}",
+                    flush=True,
+                )
+                clone = run_command(
+                    ["git", "clone", "--quiet", "--shared", str(src_repo), str(dst_repo)],
+                    timeout_sec=300,
+                )
+                if clone.returncode != 0:
+                    msg = (clone.stderr or clone.stdout or "").strip()
+                    raise RuntimeError(f"git clone failed for {instance_id}: {msg}")
+            else:
+                print(
+                    f"[defense-shards] copy repo for shard {shard_name}: {src_repo} -> {dst_repo}",
+                    flush=True,
+                )
+                shutil.copytree(src_repo, dst_repo, symlinks=True)
+        repo_paths_by_source[key] = dst_repo
+        return dst_repo
+
     rewritten_rows: List[dict] = []
     for row in rows:
         instance_id = str(row.get("instance_id", "") or "unknown")
         src_repo = Path(str(row.get("repo_path", "") or ""))
         if not src_repo.exists():
             raise FileNotFoundError(f"repo_path for {instance_id} does not exist: {src_repo}")
-        dst_repo = shard_repo_root / instance_id
-        if refresh_repo_copies and dst_repo.exists():
-            shutil.rmtree(dst_repo)
-        if not dst_repo.exists():
-            print(f"[defense-shards] copy repo {instance_id}: {src_repo} -> {dst_repo}", flush=True)
-            shutil.copytree(src_repo, dst_repo, symlinks=True)
+        dst_repo = materialize_repo_copy(src_repo, instance_id)
 
         rewritten = dict(row)
         rewritten["repo_path"] = str(dst_repo)
@@ -294,7 +336,7 @@ def main() -> int:
     parser.add_argument(
         "--isolate-repos",
         action="store_true",
-        help="Copy each shard's repo_path checkouts under OUT/_repo_copies and rewrite shard rows to use them.",
+        help="Create shard-private repo checkouts under OUT/_repo_copies and rewrite shard rows to use them.",
     )
     parser.add_argument(
         "--repo-copy-root",
@@ -340,6 +382,9 @@ def main() -> int:
 
     shard_base = out_dir / "_shards"
     repo_copy_root = Path(args.repo_copy_root) if args.repo_copy_root else out_dir / "_repo_copies"
+    if args.isolate_repos and args.refresh_repo_copies and repo_copy_root.exists():
+        print(f"[defense-shards] refresh repo copies: {repo_copy_root}", flush=True)
+        shutil.rmtree(repo_copy_root)
     shard_result_paths = sorted(shard_base.glob("shard_*/results.jsonl"))
     completed = _completed_ids([final_results, *shard_result_paths], baseline_hash)
     remaining = [instance_id for instance_id in all_ids if instance_id not in completed]

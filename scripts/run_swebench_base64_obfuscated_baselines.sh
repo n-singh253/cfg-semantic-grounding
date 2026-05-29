@@ -133,7 +133,7 @@ run_one() {
     --poll-interval-sec "$POLL_INTERVAL_SEC"
   )
   if [[ "$alias" == "semgrep" || "$alias" == "bandit" ]]; then
-    cmd+=(--isolate-repos --cleanup-repo-copies)
+    cmd+=(--isolate-repos --refresh-repo-copies --cleanup-repo-copies)
   fi
   run_cmd "${cmd[@]}"
 }
