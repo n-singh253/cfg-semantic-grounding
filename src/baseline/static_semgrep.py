@@ -219,7 +219,7 @@ class StaticSemgrepDefense(BaseDefense):
             return False
 
         if not command_exists(command[0]):
-            behavior = str(self.config.get("missing_tool_behavior", "skip"))
+            behavior = str(self.config.get("missing_tool_behavior", "reject"))
             self.last_signals.update(
                 {
                     "available": False,
@@ -227,7 +227,7 @@ class StaticSemgrepDefense(BaseDefense):
                     "failure_reason": "semgrep_not_available",
                 }
             )
-            return True if behavior == "skip" else False
+            return True if behavior == "accept" else False
 
         initial_reset_ok, initial_reset_message = self._reset_repo(repo_path, base_commit)
         self.last_signals["initial_reset_success"] = initial_reset_ok

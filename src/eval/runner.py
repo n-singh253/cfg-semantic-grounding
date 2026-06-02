@@ -244,7 +244,7 @@ def _repo_code_with_agent_tag(repo_code: Dict[str, Any], tag: str) -> Dict[str, 
     return tagged
 
 
-def _reset_repo_snapshot(repo_path: Path) -> Dict[str, Any]:
+def _reset_repo_snapshot(repo_path: Path, target: str = "HEAD") -> Dict[str, Any]:
     git_dir = repo_path / ".git"
     if not git_dir.exists():
         return {
@@ -252,10 +252,11 @@ def _reset_repo_snapshot(repo_path: Path) -> Dict[str, Any]:
             "reason_code": "non_git_repo_skip",
             "message": f"Repository path is not a git checkout; reset skipped: {repo_path}",
         }
-    ok, reset_res, clean_res, recovered_paths = reset_git_checkout(repo_path, "HEAD")
+    reset_target = target.strip() or "HEAD"
+    ok, reset_res, clean_res, recovered_paths = reset_git_checkout(repo_path, reset_target)
     message = "\n".join(
         [
-            f"git reset --hard HEAD (rc={reset_res.returncode})",
+            f"git reset --hard {reset_target} (rc={reset_res.returncode})",
             (reset_res.stdout or "").strip(),
             (reset_res.stderr or "").strip(),
             f"git clean -fd (rc={clean_res.returncode})",
@@ -907,7 +908,7 @@ def run_defense(
 
             if final_patch is not None:
                 if repo_reset_each_instance:
-                    reset_status = _reset_repo_snapshot(repo_path)
+                    reset_status = _reset_repo_snapshot(repo_path, str(attack_row.get("base_commit", "")))
                 if reset_status.get("ok"):
                     apply_details = apply_patch_with_details(repo_path, final_patch.unified_diff or "")
                 else:

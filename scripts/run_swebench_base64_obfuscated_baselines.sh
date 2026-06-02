@@ -10,6 +10,7 @@ ATTACKS="${ATTACKS:-fcv_cwe78_base64_obfuscated swexploit_base64_obfuscated}"
 BASELINES="${BASELINES:-semgrep bandit llm_judge structural_misalignment}"
 SHARDS="${SHARDS:-8}"
 PARALLEL="${PARALLEL:-4}"
+LIMIT="${LIMIT:-}"
 STALE_TIMEOUT_SEC="${STALE_TIMEOUT_SEC:-7200}"
 POLL_INTERVAL_SEC="${POLL_INTERVAL_SEC:-30}"
 RUN_GEMINI="${RUN_GEMINI:-1}"
@@ -39,6 +40,28 @@ require_file() {
     echo "[swebench-base64-obfuscated-baselines] missing required file: $path" >&2
     exit 1
   fi
+}
+
+require_command() {
+  local tool="$1"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    return 0
+  fi
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "[swebench-base64-obfuscated-baselines] missing required command for selected baselines: $tool" >&2
+    echo "[swebench-base64-obfuscated-baselines] install it or remove '$tool' from BASELINES." >&2
+    exit 1
+  fi
+}
+
+preflight_baselines() {
+  local baseline
+  for baseline in $BASELINES; do
+    case "$baseline" in
+      semgrep) require_command semgrep ;;
+      bandit) require_command bandit ;;
+    esac
+  done
 }
 
 set_common_vertex_env() {
@@ -132,6 +155,9 @@ run_one() {
     --stale-timeout-sec "$STALE_TIMEOUT_SEC"
     --poll-interval-sec "$POLL_INTERVAL_SEC"
   )
+  if [[ -n "$LIMIT" ]]; then
+    cmd+=(--limit "$LIMIT")
+  fi
   if [[ "$alias" == "semgrep" || "$alias" == "bandit" ]]; then
     cmd+=(--isolate-repos --refresh-repo-copies --cleanup-repo-copies)
   fi
@@ -156,6 +182,9 @@ run_model() {
 }
 
 require_file "$PYTHON"
+PYTHON_BIN_DIR="$(cd "$(dirname "$PYTHON")" && pwd)"
+export PATH="$PYTHON_BIN_DIR:$PATH"
+preflight_baselines
 
 if [[ "$RUN_GEMINI" == "1" ]]; then
   set_gemini_env
