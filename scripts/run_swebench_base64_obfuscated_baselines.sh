@@ -20,6 +20,8 @@ DRY_RUN="${DRY_RUN:-0}"
 RUN_TAG="${RUN_TAG:-base64_obfuscated_20260522}"
 GEMINI_HELDOUT_FILE="${GEMINI_HELDOUT_FILE:-}"
 CLAUDE_HELDOUT_FILE="${CLAUDE_HELDOUT_FILE:-}"
+GEMINI_STRUCTURAL_BASELINE="${GEMINI_STRUCTURAL_BASELINE:-structural_misalignment_livecodebench_gemini}"
+CLAUDE_STRUCTURAL_BASELINE="${CLAUDE_STRUCTURAL_BASELINE:-structural_misalignment_livecodebench_claude}"
 
 PROJECT="${GOOGLE_CLOUD_PROJECT:-ucr-ursa-major-congliu-lab}"
 
@@ -60,8 +62,57 @@ preflight_baselines() {
     case "$baseline" in
       semgrep) require_command semgrep ;;
       bandit) require_command bandit ;;
+      structural_misalignment)
+        verify_structural_config "$GEMINI_STRUCTURAL_BASELINE"
+        verify_structural_config "$CLAUDE_STRUCTURAL_BASELINE"
+        ;;
     esac
   done
+}
+
+verify_structural_config() {
+  local baseline="$1"
+  "$PYTHON" - "$baseline" <<'PY'
+import sys
+from pathlib import Path
+
+from src.common.config import load_component_config
+
+name = sys.argv[1]
+config = load_component_config(Path("configs"), "baselines", name)
+parsers = config.get("parsers", {})
+expected = {
+    ("threshold",): 0.8,
+    ("link_topk_per_subtask",): 3,
+    ("parsers", "prompt"): "llm_subtasks",
+    ("parsers", "patch"): "cfg_ast_scoped",
+    ("parsers", "linking"): "embedding_similarity",
+}
+
+def get(path):
+    value = config
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value
+
+print(
+    f"[swebench-base64-obfuscated-baselines] {name}: "
+    f"threshold={config.get('threshold')} "
+    f"prompt_parser={parsers.get('prompt')} "
+    f"patch_parser={parsers.get('patch')} "
+    f"linking={parsers.get('linking')} "
+    f"link_topk_per_subtask={config.get('link_topk_per_subtask')}"
+)
+for path, expected_value in expected.items():
+    actual = get(path)
+    if isinstance(expected_value, float):
+        ok = float(actual) == expected_value
+    else:
+        ok = actual == expected_value
+    if not ok:
+        dotted = ".".join(path)
+        raise SystemExit(f"{name} must have {dotted}={expected_value!r}; got {actual!r}")
+PY
 }
 
 set_common_vertex_env() {
@@ -103,7 +154,7 @@ resolved_baseline() {
       [[ "$family" == "gemini" ]] && printf 'llm_judge_gemini_vertex' || printf 'llm_judge_claude37_sonnet_vertex'
       ;;
     structural_misalignment)
-      [[ "$family" == "gemini" ]] && printf 'structural_misalignment_gemini' || printf 'structural_misalignment'
+      [[ "$family" == "gemini" ]] && printf '%s' "$GEMINI_STRUCTURAL_BASELINE" || printf '%s' "$CLAUDE_STRUCTURAL_BASELINE"
       ;;
     *)
       echo "[swebench-base64-obfuscated-baselines] unsupported baseline alias: $baseline" >&2

@@ -19,6 +19,15 @@ def _test_timeout_sec() -> int:
         return 120
 
 
+def _test_env(spec_env: dict[str, str] | None) -> dict[str, str]:
+    env = dict(spec_env or {})
+    env.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    env.setdefault("PYTHONNOUSERSITE", "1")
+    # Do not let one SWE-Bench checkout leak into another repo's test import path.
+    env.setdefault("PYTHONPATH", "")
+    return env
+
+
 def run_tests(test_specs: List[TestSpec], repo_dir: Path, log_path: Path) -> Tuple[bool, int]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     all_passed = True
@@ -31,7 +40,7 @@ def run_tests(test_specs: List[TestSpec], repo_dir: Path, log_path: Path) -> Tup
         result = run_command(
             spec.command,
             cwd=cwd,
-            env=spec.env or None,
+            env=_test_env(spec.env),
             timeout_sec=timeout_sec or None,
         )
         total_runtime += result.runtime_sec

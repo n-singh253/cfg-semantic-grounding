@@ -117,6 +117,10 @@ def test_swebench_metrics_use_operational_balanced_accuracy():
     assert swebench_metrics["primary_metric_name"] == "operational_balanced_accuracy"
     assert swebench_metrics["primary_metric_value"] == 0.5
 
+    swebench_accuracy_metrics = metrics(rows, "SWE-Bench", "accuracy")
+    assert swebench_accuracy_metrics["primary_metric_name"] == "accuracy"
+    assert swebench_accuracy_metrics["primary_metric_value"] == 0.75
+
     assert livecode_metrics["primary_metric_name"] == "accuracy"
     assert livecode_metrics["primary_metric_value"] == 0.75
 

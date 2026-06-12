@@ -65,15 +65,26 @@ def safe_rate(numerator: int, denominator: int) -> float | None:
     return numerator / denominator if denominator else None
 
 
-def primary_metric_name(dataset: str) -> str:
-    return "operational_balanced_accuracy" if dataset == "SWE-Bench" else "accuracy"
+def primary_metric_name(
+    dataset: str,
+    swebench_primary_metric: str = "operational_balanced_accuracy",
+) -> str:
+    return swebench_primary_metric if dataset == "SWE-Bench" else "accuracy"
 
 
-def primary_metric_value(metric_values: dict[str, Any], dataset: str) -> Any:
-    return metric_values.get(primary_metric_name(dataset))
+def primary_metric_value(
+    metric_values: dict[str, Any],
+    dataset: str,
+    swebench_primary_metric: str = "operational_balanced_accuracy",
+) -> Any:
+    return metric_values.get(primary_metric_name(dataset, swebench_primary_metric))
 
 
-def metrics(rows: list[dict[str, Any]], dataset: str) -> dict[str, Any]:
+def metrics(
+    rows: list[dict[str, Any]],
+    dataset: str,
+    swebench_primary_metric: str = "operational_balanced_accuracy",
+) -> dict[str, Any]:
     tp = fp = tn = fn = 0
     labeled = 0
     clean_total = attack_total = 0
@@ -147,7 +158,7 @@ def metrics(rows: list[dict[str, Any]], dataset: str) -> dict[str, Any]:
         "clean_accept_rate": clean_accept_rate,
         "operational_clean_accept_rate": operational_clean_accept_rate,
         "attack_reject_rate": attack_reject_rate,
-        "primary_metric_name": primary_metric_name(dataset),
+        "primary_metric_name": primary_metric_name(dataset, swebench_primary_metric),
         "primary_metric_value": primary_metric_value(
             {
                 "accuracy": accuracy,
@@ -155,6 +166,7 @@ def metrics(rows: list[dict[str, Any]], dataset: str) -> dict[str, Any]:
                 "operational_balanced_accuracy": operational_balanced_accuracy,
             },
             dataset,
+            swebench_primary_metric,
         ),
     }
 
@@ -237,7 +249,10 @@ def iter_result_paths(root: Path) -> list[Path]:
     return sorted(root.glob("*/*/*/*/results.jsonl"))
 
 
-def summarize_result(path: Path) -> dict[str, Any] | None:
+def summarize_result(
+    path: Path,
+    swebench_primary_metric: str = "operational_balanced_accuracy",
+) -> dict[str, Any] | None:
     if (
         "_shards" in path.parts
         or "_summary" in path.parts
@@ -278,7 +293,7 @@ def summarize_result(path: Path) -> dict[str, Any] | None:
         "baseline_config_hash": str(first.get("baseline_config_hash") or baseline_entry.get("hash") or ""),
         "attack_name": str(first.get("attack_name", "")),
         "mixed_eval_conditions": dict(Counter(str(row.get("mixed_eval_condition", "")) for row in rows if row.get("mixed_eval_condition"))),
-        "metrics": metrics(rows, dataset),
+        "metrics": metrics(rows, dataset, swebench_primary_metric),
         "manifest_status": manifest.get("status"),
         "completed_instances": manifest.get("completed_instances"),
         "total_instances": manifest.get("total_instances"),
@@ -520,6 +535,12 @@ def main() -> int:
         default="standard",
         help="Export the standard attack table or the separate Base64-obfuscated attack table.",
     )
+    parser.add_argument(
+        "--swebench-primary-metric",
+        choices=["accuracy", "balanced_accuracy", "operational_balanced_accuracy"],
+        default="operational_balanced_accuracy",
+        help="Primary metric to display/select for SWE-Bench rows. Other datasets always use accuracy.",
+    )
     args = parser.parse_args()
 
     root = Path(args.root)
@@ -534,7 +555,7 @@ def main() -> int:
     summaries = [
         summary
         for path in iter_result_paths(root)
-        if (summary := summarize_result(path)) is not None
+        if (summary := summarize_result(path, args.swebench_primary_metric)) is not None
         and summary["attack"] in attack_order
     ]
     summaries.sort(key=lambda x: (x["attack"], x["agent"], x["method"], x["dataset"], x["run_dir"]))

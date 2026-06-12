@@ -14,6 +14,7 @@ from src.common.config import config_hash, load_yaml
 from src.common.llm import LLMClient
 from src.eval.attack_finalize import require_finalized_attack_rows
 from src.eval.report import load_jsonl_rows
+from src.baseline.structural_misalignment.embeddings import clear_embedding_encoder_cache
 from src.baseline.structural_misalignment.graph.cache import structural_graph_key
 from src.baseline.structural_misalignment.graph.build import build_pyg_heterodata
 from src.baseline.structural_misalignment.models.train import train_graph_model
@@ -439,6 +440,7 @@ def main() -> int:
         workers=graph_workers,
     )
     _write_graph_cache_index(output_dir, train_manifest, test_manifest)
+    clear_embedding_encoder_cache()
     metrics = train_graph_model(
         train_graphs=train_graphs,
         test_graphs=test_graphs,
