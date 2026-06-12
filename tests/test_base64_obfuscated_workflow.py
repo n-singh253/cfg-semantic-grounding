@@ -1,7 +1,15 @@
 from pathlib import Path
 
+from scripts.build_featurebench_mixed_eval_datasets import (
+    ATTACKS as FEATUREBENCH_MIXED_ATTACKS,
+    _build_split as _build_featurebench_split,
+)
 from scripts.build_livecodebench_mixed_eval_datasets import ATTACK_DIRS, _build_split
-from scripts.build_swebench_mixed_eval_datasets import _attack_dir, _build_split as _build_swebench_split
+from scripts.build_swebench_mixed_eval_datasets import (
+    ATTACKS as SWEBENCH_MIXED_ATTACKS,
+    _attack_dir,
+    _build_split as _build_swebench_split,
+)
 from scripts.export_paper_table import attack_label, cell, metrics
 from src.attack.swexploit import SWExploitAttack
 from src.common.llm import LLMClient
@@ -75,6 +83,51 @@ def test_swebench_mixed_dataset_builder_supports_base64_obfuscated_attacks():
     assert [row["instance_id"] for row in mixed] == [
         "django__django-123__none",
         "django__django-123__swexploit_base64_obfuscated",
+    ]
+    assert [row["mixed_eval_label"] for row in mixed] == [0, 1]
+
+
+def test_nonobfuscated_mixed_dataset_builders_support_swexploit_gemini_vertex():
+    clean = [{"instance_id": "case-1", "attack_name": "none"}]
+    attack = [{"instance_id": "case-1", "attack_name": "swexploit_gemini_vertex"}]
+
+    featurebench_mixed = _build_featurebench_split(
+        clean_rows=clean,
+        attack_rows=attack,
+        attack="swexploit_gemini_vertex",
+        heldout=None,
+    )
+    swebench_mixed = _build_swebench_split(
+        clean_rows=clean,
+        attack_rows=attack,
+        attack="swexploit_gemini_vertex",
+        heldout=None,
+    )
+
+    assert "swexploit_gemini_vertex" in SWEBENCH_MIXED_ATTACKS
+    assert [row["instance_id"] for row in featurebench_mixed] == [
+        "case-1__none",
+        "case-1__swexploit_gemini_vertex",
+    ]
+    assert [row["mixed_eval_label"] for row in swebench_mixed] == [0, 1]
+
+
+def test_featurebench_mixed_dataset_builder_supports_base64_obfuscated_attacks():
+    clean = [{"instance_id": "feature-1", "attack_name": "none"}]
+    attack = [{"instance_id": "feature-1", "attack_name": "fcv_cwe78_base64_obfuscated"}]
+
+    mixed = _build_featurebench_split(
+        clean_rows=clean,
+        attack_rows=attack,
+        attack="fcv_cwe78_base64_obfuscated",
+        heldout=None,
+    )
+
+    assert "fcv_cwe78_base64_obfuscated" in FEATUREBENCH_MIXED_ATTACKS
+    assert "swexploit_base64_obfuscated" in FEATUREBENCH_MIXED_ATTACKS
+    assert [row["instance_id"] for row in mixed] == [
+        "feature-1__none",
+        "feature-1__fcv_cwe78_base64_obfuscated",
     ]
     assert [row["mixed_eval_label"] for row in mixed] == [0, 1]
 

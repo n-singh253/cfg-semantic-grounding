@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build labeled clean-vs-attack SWE-Bench eval datasets."""
+"""Build labeled clean-vs-attack Feature-Bench eval datasets."""
 
 from __future__ import annotations
 
@@ -13,11 +13,8 @@ from typing import Any
 ATTACKS = {
     "fcv_cwe78",
     "fcv_cwe78_base64_obfuscated",
-    "swexploit",
-    "swexploit_gemini_vertex",
     "swexploit_base64_obfuscated",
-    "swexploit_gemini",
-    "fcv_gemini",
+    "swexploit_gemini_vertex",
 }
 
 
@@ -108,9 +105,9 @@ def _summary(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dataset", default="swebench_lite")
+    parser.add_argument("--dataset", default="featurebench_full")
     parser.add_argument("--model-key", default="gemini3_flash")
-    parser.add_argument("--attacks", nargs="+", default=["fcv_cwe78_base64_obfuscated", "swexploit_base64_obfuscated"])
+    parser.add_argument("--attacks", nargs="+", default=["fcv_cwe78", "swexploit_gemini_vertex"])
     parser.add_argument("--heldout-file", type=Path, default=None)
     parser.add_argument("--outputs-root", type=Path, default=Path("outputs/attacks"))
     args = parser.parse_args()
@@ -159,8 +156,8 @@ def main() -> int:
             ),
         )
 
-        print(f"[swebench-mixed-datasets] {attack} full={len(full_rows)} -> {full_path}")
-        print(f"[swebench-mixed-datasets] {attack} heldout={len(heldout_rows)} -> {heldout_path}")
+        print(f"[featurebench-mixed-datasets] {attack} full={len(full_rows)} -> {full_path}")
+        print(f"[featurebench-mixed-datasets] {attack} heldout={len(heldout_rows)} -> {heldout_path}")
 
     return 0
 
