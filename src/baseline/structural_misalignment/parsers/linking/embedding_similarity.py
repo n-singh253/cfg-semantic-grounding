@@ -30,8 +30,11 @@ def embedding_similarity_linker(
     config = config or {}
     model_name = str(config.get("embedding_model_name", "microsoft/codebert-base"))
     pooling = str(config.get("embedding_pooling", "mean"))
+    embedding_batch_size = int(config.get("embedding_batch_size", 0) or 0) or None
+    embedding_device = str(config.get("embedding_device", "") or "").strip() or None
     threshold = float(config.get("link_similarity_threshold", 0.35))
     topk_fallback = int(config.get("link_topk_fallback", 1))
+    topk_per_subtask = int(config.get("link_topk_per_subtask", 3))
 
     normalized_subtasks = normalize_subtasks(list(subtasks))
     links = [
@@ -49,8 +52,11 @@ def embedding_similarity_linker(
         "linker": "embedding_similarity",
         "embedding_model_name": model_name,
         "embedding_pooling": pooling,
+        "embedding_batch_size": embedding_batch_size,
+        "embedding_device": embedding_device or "auto",
         "similarity_threshold": threshold,
         "link_topk_fallback": topk_fallback,
+        "link_topk_per_subtask": topk_per_subtask,
         "subtask_count": len(normalized_subtasks),
         "node_count": len(candidate_nodes),
         "deterministic": True,
@@ -63,11 +69,15 @@ def embedding_similarity_linker(
         [serialize_subtask_for_embedding(subtask) for subtask in normalized_subtasks],
         model_name=model_name,
         pooling=pooling,
+        batch_size=embedding_batch_size,
+        device=embedding_device,
     )
     node_batch = encode_texts(
         [serialize_code_node_for_embedding(node) for node in candidate_nodes],
         model_name=model_name,
         pooling=pooling,
+        batch_size=embedding_batch_size,
+        device=embedding_device,
     )
     similarity = cosine_similarity_matrix(subtask_batch.vectors, node_batch.vectors)
     node_ids = [str(node.get("node_id", "")) for node in candidate_nodes]
@@ -93,6 +103,8 @@ def embedding_similarity_linker(
             key=lambda item: (-item[0], item[1]),
         )
         selected = [(score, node_id) for score, node_id in ranked if score >= threshold]
+        if topk_per_subtask > 0:
+            selected = selected[:topk_per_subtask]
         fallback_used = False
         if not selected and ranked and topk_fallback > 0:
             selected = ranked[:topk_fallback]

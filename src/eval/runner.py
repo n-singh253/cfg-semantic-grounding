@@ -107,6 +107,28 @@ def _load_configs(
     return configs
 
 
+def _apply_agent_attack_overrides(
+    configs: Dict[str, Dict[str, Any]],
+    *,
+    agent_name: str,
+) -> Dict[str, Dict[str, Any]]:
+    """Apply attack config overrides that are specific to the selected agent."""
+    attack_cfg = configs.get("attack", {})
+    overrides = attack_cfg.get("agent_overrides")
+    if not isinstance(overrides, dict):
+        return configs
+
+    selected = overrides.get(agent_name)
+    if not isinstance(selected, dict):
+        return configs
+
+    merged = dict(attack_cfg)
+    merged.update(selected)
+    configs = dict(configs)
+    configs["attack"] = merged
+    return configs
+
+
 def _tool_availability(agent_cfg: Dict[str, Any]) -> Dict[str, bool]:
     flags = {
         "bandit": command_exists("bandit"),
@@ -222,7 +244,7 @@ def _repo_code_with_agent_tag(repo_code: Dict[str, Any], tag: str) -> Dict[str, 
     return tagged
 
 
-def _reset_repo_snapshot(repo_path: Path) -> Dict[str, Any]:
+def _reset_repo_snapshot(repo_path: Path, target: str = "HEAD") -> Dict[str, Any]:
     git_dir = repo_path / ".git"
     if not git_dir.exists():
         return {
@@ -230,10 +252,11 @@ def _reset_repo_snapshot(repo_path: Path) -> Dict[str, Any]:
             "reason_code": "non_git_repo_skip",
             "message": f"Repository path is not a git checkout; reset skipped: {repo_path}",
         }
-    ok, reset_res, clean_res, recovered_paths = reset_git_checkout(repo_path, "HEAD")
+    reset_target = target.strip() or "HEAD"
+    ok, reset_res, clean_res, recovered_paths = reset_git_checkout(repo_path, reset_target)
     message = "\n".join(
         [
-            f"git reset --hard HEAD (rc={reset_res.returncode})",
+            f"git reset --hard {reset_target} (rc={reset_res.returncode})",
             (reset_res.stdout or "").strip(),
             (reset_res.stderr or "").strip(),
             f"git clean -fd (rc={clean_res.returncode})",
@@ -373,6 +396,7 @@ def run_attack(
         attack_name=attack_name,
         baseline_name=None,  # Skip baseline loading for attack-only phase
     )
+    configs = _apply_agent_attack_overrides(configs, agent_name=agent_name)
 
     if dataset_data_path:
         configs["dataset"] = dict(configs["dataset"])
@@ -524,9 +548,13 @@ def run_attack(
                     instance.tests,
                 )
 
-            adv_prompt = attack_obj.attack(repo_code, ori_prompt, instance.tests)
+            attack_repo_code = dict(repo_code)
+            attack_repo_code["ori_patch_text"] = ori_patch.unified_diff or ""
+            attack_repo_code["ori_patch_metadata"] = dict(ori_patch.metadata or {})
+            adv_prompt = attack_obj.attack(attack_repo_code, ori_prompt, instance.tests)
             adv_prompt_hash = sha256_text(adv_prompt)
             attack_meta_early = dict(getattr(attack_obj, "last_metadata", {}))
+            prebuilt_adv_patch = attack_meta_early.get("prebuilt_adv_patch")
 
             if attack_plugin == "none" and adv_prompt_hash == ori_prompt_hash:
                 adv_patch = Patch(
@@ -535,6 +563,17 @@ def run_attack(
                         **ori_patch.metadata,
                         "reused_from": "ori_patch",
                         "reason": "none_attack_prompt_unchanged",
+                    },
+                )
+            elif isinstance(prebuilt_adv_patch, str) and prebuilt_adv_patch.strip():
+                adv_patch = Patch(
+                    unified_diff=prebuilt_adv_patch,
+                    metadata={
+                        "agent": "attack_prebuilt_patch",
+                        "source": "attack_prebuilt_patch",
+                        "selected_patch_id": attack_meta_early.get("selected_patch_id", ""),
+                        "selection_key": attack_meta_early.get("selection_key", ""),
+                        "artifact_path": attack_meta_early.get("artifact_path", ""),
                     },
                 )
             else:
@@ -550,13 +589,16 @@ def run_attack(
                 repo_backup[0].cleanup()
         
         # Handle prebuilt adversarial patches
-        prebuilt_adv_patch = attack_meta_early.get("prebuilt_adv_patch")
-        if isinstance(prebuilt_adv_patch, str) and prebuilt_adv_patch.strip():
+        if (
+            isinstance(prebuilt_adv_patch, str)
+            and prebuilt_adv_patch.strip()
+            and adv_patch.metadata.get("source") != "attack_prebuilt_patch"
+        ):
             adv_patch = Patch(
                 unified_diff=prebuilt_adv_patch,
                 metadata={
                     **adv_patch.metadata,
-                    "source": "swexploit_prebuilt_json",
+                    "source": "attack_prebuilt_patch",
                     "selected_patch_id": attack_meta_early.get("selected_patch_id", ""),
                     "selection_key": attack_meta_early.get("selection_key", ""),
                 },
@@ -866,7 +908,7 @@ def run_defense(
 
             if final_patch is not None:
                 if repo_reset_each_instance:
-                    reset_status = _reset_repo_snapshot(repo_path)
+                    reset_status = _reset_repo_snapshot(repo_path, str(attack_row.get("base_commit", "")))
                 if reset_status.get("ok"):
                     apply_details = apply_patch_with_details(repo_path, final_patch.unified_diff or "")
                 else:

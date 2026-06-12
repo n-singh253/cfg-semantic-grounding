@@ -7,7 +7,7 @@ command:
   - "$SWEAGENT_DEFAULT_CONFIG"
   - "--config"
   - "$CFG_SWEAGENT_NO_CACHE_CONFIG"
-  - "--agent.model.name=vertex_ai/claude-3-7-sonnet@20250219"
+  - "--agent.model.name=vertex_ai/claude-sonnet-4@20250514"
   - "--agent.model.temperature=0"
   - "--agent.model.per_instance_call_limit=40"
   - "--agent.model.per_instance_cost_limit=0"
@@ -17,9 +17,9 @@ command:
   - "--env.repo.type=preexisting"
   - "--env.repo.repo_name={repo_path}"
   - "--env.repo.base_commit={base_commit}"
-  - "--problem_statement.type=text"
+  - "--problem_statement.type=text_file"
   - "--problem_statement.id={instance_id}"
-  - "--problem_statement.text={agent_prompt}"
+  - "--problem_statement.path={agent_prompt_file}"
   - "--actions.apply_patch_locally=true"
   - "--output_dir={agent_artifact_dir}/sweagent_output"
 output_mode: git_diff
@@ -45,7 +45,9 @@ prompt_template: |
   Requirements:
   1) Work in the current repository checkout.
   2) Make a minimal source-code patch that fixes the issue and passes tests.
-  3) Do not modify tests, generated artifacts, dependency lockfiles, or unrelated files.
+  3) Do not modify tests, generated artifacts, dependency lockfiles, scratch files, reproduction scripts, or unrelated files.
   4) Use the available shell tools to inspect and edit files.
   5) Prefer a direct fix. Avoid long exploratory sessions.
-  6) When finished, leave your changes in the working tree and complete the task.
+  6) Apply the fix to source files in the working tree. Do not only describe or print a patch.
+  7) Before finishing, verify `git diff --binary HEAD --` is non-empty and contains only the intended source-code changes.
+  8) When finished, leave your changes in the working tree and complete the task.

@@ -45,15 +45,22 @@ class HeteroGraphClassifier:  # pragma: no cover - thin wrapper around torch mod
                     nn.Linear(hidden_dim, 2),
                 )
 
-            def _pool(self, x_dict: Dict[str, "torch.Tensor"], batch_dict: Dict[str, "torch.Tensor"]):
+            def _pool(
+                self,
+                x_dict: Dict[str, "torch.Tensor"],
+                batch_dict: Dict[str, "torch.Tensor"],
+                num_graphs: int,
+            ):
                 pooled = []
+                hidden_dim = self.classifier[0].in_features // 2
+                device = next(self.parameters()).device
                 for node_type in ("subtask", "code"):
                     x = x_dict.get(node_type)
-                    if x is None:
-                        pooled.append(torch.zeros((1, self.classifier[0].in_features // 2), device=next(self.parameters()).device))
+                    if x is None or x.numel() == 0:
+                        pooled.append(torch.zeros((num_graphs, hidden_dim), device=device))
                         continue
                     if node_type in batch_dict:
-                        pooled.append(global_mean_pool(x, batch_dict[node_type]))
+                        pooled.append(global_mean_pool(x, batch_dict[node_type], size=num_graphs))
                     else:
                         pooled.append(x.mean(dim=0, keepdim=True))
                 return torch.cat(pooled, dim=-1)
@@ -68,7 +75,8 @@ class HeteroGraphClassifier:  # pragma: no cover - thin wrapper around torch mod
                     batch_dict = data.batch_dict
                 except KeyError:
                     batch_dict = {}
-                pooled = self._pool(x_dict, batch_dict)
+                num_graphs = int(data.y.view(-1).size(0)) if hasattr(data, "y") else 1
+                pooled = self._pool(x_dict, batch_dict, num_graphs)
                 return self.classifier(pooled)
 
         return _Model(*args, **kwargs)

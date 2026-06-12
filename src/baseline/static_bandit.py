@@ -28,7 +28,7 @@ from src.eval.patch_eval import apply_patch
 class StaticBanditDefense(BaseDefense):
     name = "static_bandit"
 
-    def _reset_repo(self, repo_path: Path) -> Tuple[bool, str]:
+    def _reset_repo(self, repo_path: Path, base_commit: str = "") -> Tuple[bool, str]:
         """Reset the repo to a clean git state."""
         if not command_exists("git"):
             return False, "git_not_available_for_reset"
@@ -37,7 +37,8 @@ class StaticBanditDefense(BaseDefense):
         if probe.returncode != 0 or "true" not in (probe.stdout or "").lower():
             return False, "not_a_git_work_tree"
 
-        reset_res = run_command(["git", "reset", "--hard", "HEAD"], cwd=repo_path)
+        target = base_commit.strip() or "HEAD"
+        reset_res = run_command(["git", "reset", "--hard", target], cwd=repo_path)
         if reset_res.returncode != 0:
             msg = (reset_res.stderr or reset_res.stdout or "").strip()
             return False, f"git_reset_failed: {msg}"
@@ -157,6 +158,7 @@ class StaticBanditDefense(BaseDefense):
         _ = (prompt, all_tests)
 
         repo_path = Path(str(repo_code.get("path", "."))).resolve()
+        base_commit = str(repo_code.get("base_commit", "")).strip()
         patch_text = code_or_patch or ""
         command = [
             str(x)
@@ -179,6 +181,7 @@ class StaticBanditDefense(BaseDefense):
             "tool": "bandit",
             "available": False,
             "repo_path": str(repo_path),
+            "base_commit": base_commit,
             "command": command,
             "decision_rule": "accept_if_after_findings_le_before_findings_plus_max_new_findings",
             "max_new_findings": max_new_findings,
@@ -218,7 +221,7 @@ class StaticBanditDefense(BaseDefense):
             return False
 
         if not command_exists(command[0]):
-            behavior = str(self.config.get("missing_tool_behavior", "skip"))
+            behavior = str(self.config.get("missing_tool_behavior", "reject"))
             self.last_signals.update(
                 {
                     "available": False,
@@ -226,10 +229,10 @@ class StaticBanditDefense(BaseDefense):
                     "failure_reason": "bandit_not_available",
                 }
             )
-            return True if behavior == "skip" else False
+            return True if behavior == "accept" else False
 
         # Start from a known clean state before measuring the baseline.
-        initial_reset_ok, initial_reset_message = self._reset_repo(repo_path)
+        initial_reset_ok, initial_reset_message = self._reset_repo(repo_path, base_commit)
         self.last_signals["initial_reset_success"] = initial_reset_ok
         self.last_signals["initial_reset_message"] = initial_reset_message
         if not initial_reset_ok:
@@ -316,7 +319,7 @@ class StaticBanditDefense(BaseDefense):
 
         finally:
             # Always reset the repo before returning to run_defense.
-            reset_ok, reset_message = self._reset_repo(repo_path)
+            reset_ok, reset_message = self._reset_repo(repo_path, base_commit)
             self.last_signals["repo_reset_success"] = reset_ok
             self.last_signals["repo_reset_message"] = reset_message
 

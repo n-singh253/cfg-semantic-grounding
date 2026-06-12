@@ -101,6 +101,9 @@ class StructuralMisalignmentDefense(BaseDefense):
                 )
             inference = predict_graph_probability(bundle, hetero_graph)
             accepted = decide_from_policy(inference.injection_probability, threshold, decision_policy)
+            subtasks_metadata = graph_meta.get("subtasks_metadata", {})
+            if not isinstance(subtasks_metadata, dict):
+                subtasks_metadata = {}
             self.last_signals = {
                 "threshold": threshold,
                 "decision_policy": decision_policy,
@@ -120,6 +123,11 @@ class StructuralMisalignmentDefense(BaseDefense):
                 "embedding_pooling": graph_meta.get("embedding_pooling", ""),
                 "llm_provider": graph_meta.get("llm_provider", ""),
                 "llm_model": graph_meta.get("llm_model", ""),
+                "subtask_parse_diagnostics": subtasks_metadata.get("parse_diagnostics", {}),
+                "requirement_retention_diagnostics": subtasks_metadata.get(
+                    "requirement_retention_diagnostics",
+                    {},
+                ),
                 "graph_cache_hit": bool(graph_meta.get("graph_cache_hit", False)),
                 "graph_key": graph_meta.get("graph_key", ""),
                 "graph_model_split": graph_meta.get("model_split", ""),

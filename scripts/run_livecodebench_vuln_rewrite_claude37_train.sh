@@ -20,6 +20,7 @@ set -euo pipefail
 #   LCB_AUTO_SETUP=1
 #   LCB_RELEASE=release_latest
 #   LCB_SETUP_LIMIT=10
+#   LCB_REPOS_ROOT=$HOME/livecodebench_repos
 #   DRY_RUN=1
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -45,6 +46,7 @@ FIDELITY_MODE="${FIDELITY_MODE:-llm}"
 LCB_RELEASE="${LCB_RELEASE:-release_latest}"
 LCB_AUTO_SETUP="${LCB_AUTO_SETUP:-1}"
 LCB_DATA_PATH="${LCB_DATA_PATH:-${LIVE_CODEBENCH_DATA_PATH:-}}"
+LCB_REPOS_ROOT="${LCB_REPOS_ROOT:-${LIVE_CODEBENCH_REPOS_ROOT:-}}"
 LCB_DEFAULT_DATA_PATH="data/livecodebench_code_generation_lite_${LCB_RELEASE}.jsonl"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
@@ -116,6 +118,9 @@ if [[ "$DATASET" == "livecodebench" ]]; then
       --release "$LCB_RELEASE"
       --output "$LCB_DATA_PATH"
     )
+    if [[ -n "$LCB_REPOS_ROOT" ]]; then
+      setup_cmd+=(--repos-root "$LCB_REPOS_ROOT")
+    fi
     if [[ -n "${LCB_SETUP_LIMIT:-}" ]]; then
       setup_cmd+=(--limit "$LCB_SETUP_LIMIT")
     fi
@@ -154,6 +159,9 @@ echo "[vuln-rewrite] dataset=$DATASET split=$SPLIT agent=$AGENT attack=$ATTACK"
 echo "[vuln-rewrite] out_root=$OUT_ROOT mode=$MODE shards=$SHARDS parallel=$PARALLEL"
 if [[ "$DATASET" == "livecodebench" ]]; then
   echo "[vuln-rewrite] livecodebench_data=$LCB_DATA_PATH auto_setup=$LCB_AUTO_SETUP release=$LCB_RELEASE"
+  if [[ -n "$LCB_REPOS_ROOT" ]]; then
+    echo "[vuln-rewrite] livecodebench_repos_root=$LCB_REPOS_ROOT"
+  fi
 fi
 echo "[vuln-rewrite] claude_region=$ANTHROPIC_VERTEX_REGION project=$ANTHROPIC_VERTEX_PROJECT_ID"
 echo "[vuln-rewrite] sweagent_bin=$SWEAGENT_BIN"

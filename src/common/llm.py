@@ -3,15 +3,36 @@
 from __future__ import annotations
 
 import json
+import multiprocessing as mp
 import os
 import shlex
+import threading
 import time
+import traceback
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from src.common.artifact_store import atomic_write_json, atomic_write_text
 from src.common.hashing import sha256_json, sha256_text
+
+
+_PROVIDER_SEMAPHORES: Dict[str, threading.BoundedSemaphore] = {}
+_PROVIDER_SEMAPHORES_LOCK = threading.Lock()
+
+
+def _provider_call_process_worker(queue: Any, kwargs: Dict[str, Any]) -> None:
+    try:
+        client = LLMClient(Path(os.environ.get("CFG_LLM_SUBPROCESS_CACHE_ROOT", "/tmp/cfg-llm-provider-call")))
+        queue.put({"ok": True, "value": client._provider_call(**kwargs)})
+    except BaseException as exc:  # pragma: no cover - subprocess/provider dependent.
+        queue.put(
+            {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "traceback": traceback.format_exc(),
+            }
+        )
 
 
 @dataclass
@@ -55,6 +76,7 @@ class LLMClient:
         artifact_dir: Path,
         temperature: float = 0.0,
         seed: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
         max_retries: int = 2,
         backoff_sec: float = 1.0,
         allow_provider_fallback: bool = False,
@@ -79,6 +101,12 @@ class LLMClient:
         if cache_file.exists():
             cached = json.loads(cache_file.read_text(encoding="utf-8"))
             cached["cache_hit"] = True
+            self._write_artifacts(
+                artifact_dir,
+                prompt,
+                str(cached.get("text", "")),
+                cached,
+            )
             return LLMCallResult(**cached)
 
         if fidelity_mode == "surrogate_debug":
@@ -99,15 +127,17 @@ class LLMClient:
         for attempt in range(max_retries + 1):
             call_count += 1
             try:
-                text, usage = self._provider_call(
+                text, usage = self._provider_call_with_hard_timeout(
                     provider=provider,
                     model=model,
                     prompt=prompt,
                     temperature=temperature,
                     seed=seed,
+                    max_output_tokens=max_output_tokens,
                 )
                 if not (text or "").strip():
-                    raise RuntimeError("LLM provider returned empty response")
+                    usage_summary = json.dumps(usage, sort_keys=True)[:1500] if usage else "{}"
+                    raise RuntimeError(f"LLM provider returned empty response; usage={usage_summary}")
                 response_hash = sha256_text(text)
                 blocked = self._is_blocked_text(text)
                 result = LLMCallResult(
@@ -155,6 +185,107 @@ class LLMClient:
             f"LLM call failed for {module_kind}:{module_name} after retries. "
             f"provider={provider}, model={model}, error={last_error}"
         )
+
+    def _provider_call_with_hard_timeout(
+        self,
+        *,
+        provider: str,
+        model: str,
+        prompt: str,
+        temperature: float,
+        seed: Optional[int],
+        max_output_tokens: Optional[int],
+    ) -> tuple[str, Dict[str, Any]]:
+        timeout_sec = self._hard_timeout_seconds(provider)
+        call_kwargs = {
+            "provider": provider,
+            "model": model,
+            "prompt": prompt,
+            "temperature": temperature,
+            "seed": seed,
+            "max_output_tokens": max_output_tokens,
+        }
+        semaphore = self._provider_semaphore(provider)
+        if semaphore is not None:
+            with semaphore:
+                return self._provider_call_with_hard_timeout_inner(timeout_sec=timeout_sec, call_kwargs=call_kwargs)
+        return self._provider_call_with_hard_timeout_inner(timeout_sec=timeout_sec, call_kwargs=call_kwargs)
+
+    def _provider_call_with_hard_timeout_inner(
+        self,
+        *,
+        timeout_sec: float,
+        call_kwargs: Dict[str, Any],
+    ) -> tuple[str, Dict[str, Any]]:
+        if timeout_sec <= 0:
+            return self._provider_call(
+                **call_kwargs,
+            )
+
+        methods = mp.get_all_start_methods()
+        context = mp.get_context("fork" if "fork" in methods else methods[0])
+        queue: Any = context.Queue(maxsize=1)
+        process = context.Process(target=_provider_call_process_worker, args=(queue, call_kwargs))
+        process.start()
+        try:
+            process.join(timeout_sec)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(5)
+                raise TimeoutError(f"LLM provider call exceeded hard timeout of {timeout_sec:g}s")
+            if queue.empty():
+                raise RuntimeError(f"LLM provider subprocess exited without a result; exitcode={process.exitcode}")
+            result = queue.get()
+            if not result.get("ok"):
+                error = str(result.get("error", "unknown subprocess error"))
+                tb = str(result.get("traceback", ""))[:2000]
+                raise RuntimeError(f"LLM provider subprocess failed: {error}\n{tb}")
+            value = result["value"]
+            return value[0], value[1]
+        finally:
+            queue.cancel_join_thread()
+            queue.close()
+
+    @staticmethod
+    def _hard_timeout_seconds(provider: str) -> float:
+        normalized = provider.strip().upper().replace("-", "_")
+        provider_key = f"CFG_{normalized}_HARD_TIMEOUT_SEC"
+        raw_value = os.environ.get(provider_key) or os.environ.get("CFG_LLM_HARD_TIMEOUT_SEC")
+        if not raw_value:
+            return 0.0
+        try:
+            return max(0.0, float(raw_value))
+        except ValueError:
+            return 0.0
+
+    @staticmethod
+    def _provider_concurrency_limit(provider: str) -> int:
+        normalized = provider.strip().upper().replace("-", "_")
+        provider_key = f"CFG_{normalized}_MAX_CONCURRENT_CALLS"
+        raw_value = os.environ.get(provider_key) or os.environ.get("CFG_LLM_MAX_CONCURRENT_CALLS")
+        if not raw_value:
+            return 0
+        try:
+            return max(0, int(raw_value))
+        except ValueError:
+            return 0
+
+    @staticmethod
+    def _provider_semaphore(provider: str) -> threading.BoundedSemaphore | None:
+        limit = LLMClient._provider_concurrency_limit(provider)
+        if limit <= 0:
+            return None
+        normalized = provider.strip().lower().replace("-", "_")
+        key = f"{normalized}:{limit}"
+        with _PROVIDER_SEMAPHORES_LOCK:
+            semaphore = _PROVIDER_SEMAPHORES.get(key)
+            if semaphore is None:
+                semaphore = threading.BoundedSemaphore(limit)
+                _PROVIDER_SEMAPHORES[key] = semaphore
+            return semaphore
 
     @staticmethod
     def _is_blocked_text(text: str) -> bool:
@@ -212,6 +343,7 @@ class LLMClient:
         prompt: str,
         temperature: float,
         seed: Optional[int],
+        max_output_tokens: Optional[int] = None,
     ) -> tuple[str, Dict[str, Any]]:
         normalized = provider.strip().lower()
         if normalized == "openai":
@@ -219,9 +351,14 @@ class LLMClient:
         if normalized == "vllm":
             return self._call_vllm(model=model, prompt=prompt, temperature=temperature, seed=seed)
         if normalized == "gemini":
-            return self._call_gemini(model=model, prompt=prompt, temperature=temperature)
+            return self._call_gemini(model=model, prompt=prompt, temperature=temperature, max_output_tokens=max_output_tokens)
         if normalized in {"gemini_vertex", "vertex", "vertex_ai"}:
-            return self._call_gemini_vertex(model=model, prompt=prompt, temperature=temperature)
+            return self._call_gemini_vertex(
+                model=model,
+                prompt=prompt,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+            )
         if normalized == "gemini_cli":
             return self._call_gemini_cli(model=model, prompt=prompt, temperature=temperature)
         if normalized in {"anthropic_vertex", "claude_vertex", "vertex_anthropic"}:
@@ -304,7 +441,78 @@ class LLMClient:
         return text, usage
 
     @staticmethod
-    def _call_gemini(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+    def _extract_gemini_text(resp: Any) -> str:
+        text = getattr(resp, "text", "") or ""
+        if text:
+            return str(text).strip()
+
+        parts_text: list[str] = []
+        for candidate in getattr(resp, "candidates", []) or []:
+            content = getattr(candidate, "content", None)
+            for part in getattr(content, "parts", []) or []:
+                part_text = getattr(part, "text", "") or ""
+                if part_text:
+                    parts_text.append(str(part_text))
+        return "\n".join(parts_text).strip()
+
+    @staticmethod
+    def _gemini_empty_response_diagnostics(resp: Any) -> Dict[str, Any]:
+        diagnostics: Dict[str, Any] = {}
+        prompt_feedback = getattr(resp, "prompt_feedback", None)
+        if prompt_feedback is not None:
+            diagnostics["prompt_feedback"] = str(prompt_feedback)
+        candidate_summaries = []
+        for candidate in getattr(resp, "candidates", []) or []:
+            candidate_summaries.append(
+                {
+                    "finish_reason": str(getattr(candidate, "finish_reason", "")),
+                    "safety_ratings": str(getattr(candidate, "safety_ratings", "")),
+                }
+            )
+        if candidate_summaries:
+            diagnostics["candidates"] = candidate_summaries
+        return diagnostics
+
+    @staticmethod
+    def _gemini_safety_settings(types_module: Any) -> list[Any]:
+        threshold_name = (
+            os.environ.get("CFG_GEMINI_VERTEX_SAFETY_THRESHOLD")
+            or os.environ.get("CFG_GEMINI_SAFETY_THRESHOLD")
+            or os.environ.get("CFG_LLM_SAFETY_THRESHOLD")
+            or ""
+        ).strip()
+        if not threshold_name:
+            return []
+
+        threshold = getattr(types_module.HarmBlockThreshold, threshold_name, None)
+        if threshold is None:
+            threshold = getattr(types_module.HarmBlockThreshold, threshold_name.upper(), None)
+        if threshold is None:
+            raise RuntimeError(f"Unsupported Gemini safety threshold: {threshold_name}")
+
+        categories = [
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "HARM_CATEGORY_JAILBREAK",
+        ]
+        settings = []
+        for category_name in categories:
+            category = getattr(types_module.HarmCategory, category_name, None)
+            if category is not None:
+                settings.append(types_module.SafetySetting(category=category, threshold=threshold))
+        return settings
+
+    @staticmethod
+    def _call_gemini(
+        *,
+        model: str,
+        prompt: str,
+        temperature: float,
+        max_output_tokens: Optional[int] = None,
+    ) -> tuple[str, Dict[str, Any]]:
         import google.generativeai as genai  # pragma: no cover - optional dependency.
 
         api_key = os.environ.get("GOOGLE_API_KEY")
@@ -312,11 +520,10 @@ class LLMClient:
             raise RuntimeError("GOOGLE_API_KEY is not set")
         genai.configure(api_key=api_key)
         gen_model = genai.GenerativeModel(model_name=model)
-        resp = gen_model.generate_content(
-            prompt,
-            generation_config={"temperature": temperature},
-        )
-        text = getattr(resp, "text", "") or ""
+        generation_config: Dict[str, Any] = {"temperature": temperature}
+        if max_output_tokens is not None:
+            generation_config["max_output_tokens"] = max_output_tokens
+        resp = gen_model.generate_content(prompt, generation_config=generation_config)
         usage = {}
         usage_meta = getattr(resp, "usage_metadata", None)
         if usage_meta is not None:
@@ -325,10 +532,21 @@ class LLMClient:
                 "candidates_token_count": getattr(usage_meta, "candidates_token_count", None),
                 "total_token_count": getattr(usage_meta, "total_token_count", None),
             }
-        return text.strip(), usage
+        text = LLMClient._extract_gemini_text(resp)
+        if not text:
+            diagnostics = LLMClient._gemini_empty_response_diagnostics(resp)
+            if diagnostics:
+                usage["empty_response_diagnostics"] = diagnostics
+        return text, usage
 
     @staticmethod
-    def _call_gemini_vertex(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:
+    def _call_gemini_vertex(
+        *,
+        model: str,
+        prompt: str,
+        temperature: float,
+        max_output_tokens: Optional[int] = None,
+    ) -> tuple[str, Dict[str, Any]]:
         from google import genai  # pragma: no cover - optional dependency.
         from google.genai import types  # pragma: no cover - optional dependency.
 
@@ -348,7 +566,12 @@ class LLMClient:
         max_output_tokens_env = os.environ.get("CFG_GEMINI_VERTEX_MAX_OUTPUT_TOKENS") or os.environ.get(
             "CFG_LLM_MAX_OUTPUT_TOKENS"
         )
-        max_output_tokens = int(max_output_tokens_env) if max_output_tokens_env else None
+        if max_output_tokens is None:
+            max_output_tokens = int(max_output_tokens_env) if max_output_tokens_env else None
+        thinking_budget_env = os.environ.get("CFG_GEMINI_VERTEX_THINKING_BUDGET") or os.environ.get(
+            "CFG_LLM_THINKING_BUDGET"
+        )
+        thinking_budget = int(thinking_budget_env) if thinking_budget_env not in {None, ""} else None
         response_mime_type = os.environ.get("CFG_GEMINI_VERTEX_RESPONSE_MIME_TYPE") or os.environ.get(
             "CFG_LLM_RESPONSE_MIME_TYPE"
         )
@@ -362,16 +585,23 @@ class LLMClient:
             "temperature": temperature,
             "http_options": types.HttpOptions(api_version="v1", timeout=timeout_ms),
         }
+        safety_settings = LLMClient._gemini_safety_settings(types)
         if max_output_tokens is not None:
             generation_config["max_output_tokens"] = max_output_tokens
+        if thinking_budget is not None:
+            generation_config["thinking_config"] = types.ThinkingConfig(
+                thinking_budget=thinking_budget,
+                include_thoughts=False,
+            )
         if response_mime_type:
             generation_config["response_mime_type"] = response_mime_type
+        if safety_settings:
+            generation_config["safety_settings"] = safety_settings
         resp = client.models.generate_content(
             model=model,
             contents=prompt,
             config=types.GenerateContentConfig(**generation_config),
         )
-        text = getattr(resp, "text", "") or ""
         usage = {}
         usage_meta = getattr(resp, "usage_metadata", None)
         if usage_meta is not None:
@@ -380,7 +610,12 @@ class LLMClient:
                 "candidates_token_count": getattr(usage_meta, "candidates_token_count", None),
                 "total_token_count": getattr(usage_meta, "total_token_count", None),
             }
-        return text.strip(), usage
+        text = LLMClient._extract_gemini_text(resp)
+        if not text:
+            diagnostics = LLMClient._gemini_empty_response_diagnostics(resp)
+            if diagnostics:
+                usage["empty_response_diagnostics"] = diagnostics
+        return text, usage
 
     @staticmethod
     def _call_gemini_cli(*, model: str, prompt: str, temperature: float) -> tuple[str, Dict[str, Any]]:

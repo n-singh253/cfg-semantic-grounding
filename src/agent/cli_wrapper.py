@@ -286,8 +286,12 @@ def run_cli_agent(
         tests_text=tests_text,
         tests_json=tests_serialized,
     )
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    agent_prompt_file = artifact_dir / "problem_statement.md"
+    atomic_write_text(agent_prompt_file, agent_prompt)
     fmt = {
         "agent_artifact_dir": str(artifact_dir),
+        "agent_prompt_file": str(agent_prompt_file),
         "repo_path": str(repo_code.get("path", ".")),
         "prompt": prompt,
         "agent_prompt": agent_prompt,

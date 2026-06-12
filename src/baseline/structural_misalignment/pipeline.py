@@ -56,6 +56,8 @@ def build_structural_graph(
     instance_id = str(repo_code.get("instance_id", "unknown"))
     embedding_model_name = str(config.get("embedding_model_name", "microsoft/codebert-base"))
     embedding_pooling = str(config.get("embedding_pooling", "mean"))
+    embedding_batch_size = int(config.get("embedding_batch_size", 0) or 0) or None
+    embedding_device = str(config.get("embedding_device", "") or "").strip() or None
     base_repo = Path(str(repo_code.get("path", ""))).resolve()
 
     subtasks_raw, subtasks_meta = prompt_parser(
@@ -108,11 +110,15 @@ def build_structural_graph(
         [serialize_subtask_for_embedding(subtask) for subtask in subtasks],
         model_name=embedding_model_name,
         pooling=embedding_pooling,
+        batch_size=embedding_batch_size,
+        device=embedding_device,
     )
     code_embeddings = encode_texts(
         [serialize_code_node_for_embedding(node) for node in candidate_nodes],
         model_name=embedding_model_name,
         pooling=embedding_pooling,
+        batch_size=embedding_batch_size,
+        device=embedding_device,
     )
     graph_payload = build_canonical_graph(
         instance_id=instance_id,

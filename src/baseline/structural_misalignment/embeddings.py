@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, List
@@ -42,17 +43,32 @@ def _require_embedding_deps():
     return torch, AutoModel, AutoTokenizer
 
 
-@lru_cache(maxsize=4)
-def _load_encoder(model_name: str):
+def _embedding_device(torch, device: str | None = None) -> str:
+    requested = (os.environ.get("CFG_STRUCTURAL_EMBEDDING_DEVICE") or device or "auto").strip().lower()
+    if requested in {"", "auto"}:
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if requested == "cuda" and not torch.cuda.is_available():
+        return "cpu"
+    if requested not in {"cpu", "cuda"}:
+        raise ValueError(f"Unsupported embedding device: {device!r}")
+    return requested
+
+
+@lru_cache(maxsize=8)
+def _load_encoder(model_name: str, device: str):
     torch, AutoModel, AutoTokenizer = _require_embedding_deps()
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     # Prefer safetensors so recent Transformers versions do not block loading
     # PyTorch .bin checkpoints on older torch releases.
     model = AutoModel.from_pretrained(model_name, use_safetensors=True)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     model.eval()
     return tokenizer, model, device
+
+
+def clear_embedding_encoder_cache() -> None:
+    """Release cached embedding models before later GPU-heavy stages."""
+    _load_encoder.cache_clear()
 
 
 def encode_texts(
@@ -60,9 +76,12 @@ def encode_texts(
     *,
     model_name: str,
     pooling: str = "mean",
+    batch_size: int | None = None,
+    device: str | None = None,
 ) -> EmbeddingBatch:
     torch, _, _ = _require_embedding_deps()
-    tokenizer, model, device = _load_encoder(model_name)
+    resolved_device = _embedding_device(torch, device)
+    tokenizer, model, device = _load_encoder(model_name, resolved_device)
     if not texts:
         hidden_size = int(getattr(model.config, "hidden_size", 768))
         return EmbeddingBatch(
@@ -72,23 +91,32 @@ def encode_texts(
             pooling=pooling,
         )
 
+    env_batch_size = os.environ.get("CFG_STRUCTURAL_EMBEDDING_BATCH_SIZE", "").strip()
+    configured_batch_size = int(env_batch_size) if env_batch_size else batch_size
+    if configured_batch_size is None:
+        configured_batch_size = len(texts)
+    configured_batch_size = max(1, int(configured_batch_size))
+    batches: List[np.ndarray] = []
     with torch.no_grad():
-        encoded = tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            max_length=512,
-            return_tensors="pt",
-        )
-        encoded = {key: value.to(device) for key, value in encoded.items()}
-        output = model(**encoded)
-        hidden = output.last_hidden_state
-        if pooling != "mean":
-            raise ValueError(f"Unsupported embedding pooling: {pooling}")
-        attention = encoded["attention_mask"].unsqueeze(-1)
-        summed = (hidden * attention).sum(dim=1)
-        counts = attention.sum(dim=1).clamp(min=1)
-        vectors = (summed / counts).detach().cpu().numpy().astype(np.float32)
+        for start in range(0, len(texts), configured_batch_size):
+            encoded = tokenizer(
+                texts[start : start + configured_batch_size],
+                padding=True,
+                truncation=True,
+                max_length=512,
+                return_tensors="pt",
+            )
+            encoded = {key: value.to(device) for key, value in encoded.items()}
+            output = model(**encoded)
+            hidden = output.last_hidden_state
+            if pooling != "mean":
+                raise ValueError(f"Unsupported embedding pooling: {pooling}")
+            attention = encoded["attention_mask"].unsqueeze(-1)
+            summed = (hidden * attention).sum(dim=1)
+            counts = attention.sum(dim=1).clamp(min=1)
+            batches.append((summed / counts).detach().cpu().numpy().astype(np.float32))
+
+    vectors = np.concatenate(batches, axis=0) if batches else np.zeros((0, 768), dtype=np.float32)
 
     return EmbeddingBatch(vectors=vectors, model_name=model_name, device=device, pooling=pooling)
 
