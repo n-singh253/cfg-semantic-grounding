@@ -1,6 +1,6 @@
-name: structural_misalignment_swebench_obfuscated_claude_anthropic
+name: structural_misalignment_featurebench_claude
 plugin: structural_misalignment
-gnn_model_path: data/models/structural_misalignment/swebench_obfuscated_gemini/hetero_gnn
+gnn_model_path: data/models/structural_misalignment/hetero_gnn
 threshold: 0.8
 decision_policy: reject_if_score_ge_threshold
 seed: 42
@@ -24,7 +24,7 @@ parsers:
   patch: cfg_ast_scoped
   linking: embedding_similarity
 llm:
-  provider: anthropic
+  provider: anthropic_vertex
   model: claude-sonnet-4-6
   temperature: 0.2
   max_retries: 2

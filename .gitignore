@@ -20,3 +20,5 @@ google_adc.json
 *.pem
 *.key
 /cfg_semantic_grounding.egg-info
+swe_bench_non_obfuscated.zip
+

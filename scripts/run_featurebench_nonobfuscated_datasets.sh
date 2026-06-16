@@ -7,7 +7,7 @@ cd "$ROOT"
 PYTHON="${PYTHON:-$ROOT/.venv/bin/python}"
 DATASET="${DATASET:-featurebench_full}"
 SPLIT="${SPLIT:-test}"
-ATTACKS="${ATTACKS:-none fcv_cwe78 swexploit_gemini_vertex}"
+ATTACKS="${ATTACKS:-none fcv_cwe78 swexploit_anthropic}"
 SHARDS="${SHARDS:-8}"
 PARALLEL="${PARALLEL:-4}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -58,15 +58,8 @@ set_gemini_env() {
 }
 
 set_claude_env() {
-  if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-    echo "[featurebench-nonobfuscated-datasets] ANTHROPIC_API_KEY is required for CLAUDE_AGENT=$CLAUDE_AGENT" >&2
-    exit 1
-  fi
-  # SWExploit still uses the Gemini Vertex attack prompt config; keep Vertex env
-  # available for that attack while routing SWE-agent's Claude calls through Anthropic.
-  if [[ " $ATTACKS " == *" swexploit_gemini_vertex "* ]]; then
-    set_common_vertex_env
-  fi
+  set_common_vertex_env
+  export CLAUDE_VERTEX_LOCATION="${CLAUDE_VERTEX_LOCATION:-$VERTEXAI_LOCATION}"
 }
 
 run_model_datasets() {

@@ -13,6 +13,7 @@ from typing import Any
 ATTACKS = {
     "fcv_cwe78",
     "fcv_cwe78_base64_obfuscated",
+    "swexploit_anthropic",
     "swexploit_base64_obfuscated",
     "swexploit_gemini_vertex",
 }
@@ -107,7 +108,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", default="featurebench_full")
     parser.add_argument("--model-key", default="gemini3_flash")
-    parser.add_argument("--attacks", nargs="+", default=["fcv_cwe78", "swexploit_gemini_vertex"])
+    parser.add_argument("--attacks", nargs="+", default=["fcv_cwe78", "swexploit_anthropic"])
     parser.add_argument("--heldout-file", type=Path, default=None)
     parser.add_argument("--outputs-root", type=Path, default=Path("outputs/attacks"))
     args = parser.parse_args()

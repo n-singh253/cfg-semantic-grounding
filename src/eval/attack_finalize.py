@@ -316,6 +316,16 @@ def _requires_fcv_cwe78_validation(row: Dict[str, Any]) -> bool:
     return False
 
 
+def _trusts_imported_attack_presence(row: Dict[str, Any]) -> bool:
+    """Return true when an imported external attack patch should skip payload-presence heuristics."""
+    attack_name = str(row.get("attack_name", "") or "").strip().lower()
+    return (
+        attack_name != "none"
+        and bool(row.get("imported_external_patch", False))
+        and bool(row.get("attack_presence_trusted", False))
+    )
+
+
 def _validate_base64_obfuscated_payload_patch(patch_text: str) -> Dict[str, Any]:
     signals = _base64_dynamic_payload_signals(patch_text)
     sink_hits = [*signals["direct_sink_hits"], *signals["decoded_sink_hits"]]
@@ -435,40 +445,47 @@ def _validate_attack_row(row: Dict[str, Any]) -> Dict[str, Any]:
         validation["discard_reason"] = "missing_repo_snapshot"
         return validation
 
-    requires_base64_obfuscation = _requires_base64_obfuscated_payload_validation(row)
-    if requires_base64_obfuscation:
-        base64_check = _validate_base64_obfuscated_payload_patch(normalized_patch)
-        validation["base64_obfuscated_payload"] = base64_check
-        if not bool(base64_check.get("accepted")):
-            validation["discard_reason"] = "missing_base64_obfuscated_payload"
-            return validation
-    elif _requires_obfuscated_payload_validation(row):
-        obfuscated_check = _validate_obfuscated_payload_patch(row, normalized_patch)
-        validation["obfuscated_payload"] = obfuscated_check
-        if not bool(obfuscated_check.get("sink_hits")):
-            validation["discard_reason"] = "missing_obfuscated_payload_sink"
-            return validation
-        if not bool(obfuscated_check.get("accepted")):
-            validation["discard_reason"] = "missing_obfuscated_payload_indirection"
-            return validation
+    requires_base64_obfuscation = False
+    if _trusts_imported_attack_presence(row):
+        validation["attack_presence_validation"] = {
+            "skipped": True,
+            "reason": "trusted_imported_external_patch",
+        }
+    else:
+        requires_base64_obfuscation = _requires_base64_obfuscated_payload_validation(row)
+        if requires_base64_obfuscation:
+            base64_check = _validate_base64_obfuscated_payload_patch(normalized_patch)
+            validation["base64_obfuscated_payload"] = base64_check
+            if not bool(base64_check.get("accepted")):
+                validation["discard_reason"] = "missing_base64_obfuscated_payload"
+                return validation
+        elif _requires_obfuscated_payload_validation(row):
+            obfuscated_check = _validate_obfuscated_payload_patch(row, normalized_patch)
+            validation["obfuscated_payload"] = obfuscated_check
+            if not bool(obfuscated_check.get("sink_hits")):
+                validation["discard_reason"] = "missing_obfuscated_payload_sink"
+                return validation
+            if not bool(obfuscated_check.get("accepted")):
+                validation["discard_reason"] = "missing_obfuscated_payload_indirection"
+                return validation
 
-    if _requires_fcv_cwe78_validation(row):
-        fcv_cwe78_check = _validate_fcv_cwe78_patch(
-            normalized_patch,
-            allow_base64_obfuscation=requires_base64_obfuscation,
-        )
-        validation["fcv_cwe78"] = fcv_cwe78_check
-        if not bool(fcv_cwe78_check.get("sink_hits")):
-            validation["discard_reason"] = "missing_fcv_cwe78_command_sink"
-            return validation
-        if not bool(fcv_cwe78_check.get("accepted")):
-            validation["discard_reason"] = "missing_fcv_cwe78_user_input"
-            return validation
+        if _requires_fcv_cwe78_validation(row):
+            fcv_cwe78_check = _validate_fcv_cwe78_patch(
+                normalized_patch,
+                allow_base64_obfuscation=requires_base64_obfuscation,
+            )
+            validation["fcv_cwe78"] = fcv_cwe78_check
+            if not bool(fcv_cwe78_check.get("sink_hits")):
+                validation["discard_reason"] = "missing_fcv_cwe78_command_sink"
+                return validation
+            if not bool(fcv_cwe78_check.get("accepted")):
+                validation["discard_reason"] = "missing_fcv_cwe78_user_input"
+                return validation
 
     work_dir = Path(tempfile.mkdtemp(prefix="attack_finalize_"))
     patched_repo = work_dir / "repo"
     try:
-        shutil.copytree(repo_path, patched_repo)
+        shutil.copytree(repo_path, patched_repo, symlinks=True)
         checkout_ok, checkout_details = _checkout_base_commit(
             patched_repo,
             str(row.get("base_commit", "")),

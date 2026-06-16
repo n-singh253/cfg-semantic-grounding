@@ -6,7 +6,7 @@ cd "$ROOT"
 
 PYTHON="${PYTHON:-$ROOT/.venv/bin/python}"
 DATASET="${DATASET:-featurebench_full}"
-ATTACKS="${ATTACKS:-fcv_cwe78 swexploit_gemini_vertex}"
+ATTACKS="${ATTACKS:-fcv_cwe78 swexploit_anthropic}"
 RUN_GEMINI="${RUN_GEMINI:-1}"
 RUN_CLAUDE="${RUN_CLAUDE:-1}"
 GEMINI_MODEL_KEY="${GEMINI_MODEL_KEY:-gemini3_flash}"

@@ -1,6 +1,6 @@
-name: structural_misalignment_swebench_obfuscated_claude_anthropic
+name: structural_misalignment_featurebench_gemini
 plugin: structural_misalignment
-gnn_model_path: data/models/structural_misalignment/swebench_obfuscated_gemini/hetero_gnn
+gnn_model_path: data/models/structural_misalignment/hetero_gnn
 threshold: 0.8
 decision_policy: reject_if_score_ge_threshold
 seed: 42
@@ -24,8 +24,8 @@ parsers:
   patch: cfg_ast_scoped
   linking: embedding_similarity
 llm:
-  provider: anthropic
-  model: claude-sonnet-4-6
+  provider: gemini_vertex
+  model: gemini-3-flash-preview
   temperature: 0.2
   max_retries: 2
   backoff_sec: 5.0

@@ -14,6 +14,7 @@ ATTACKS = {
     "fcv_cwe78",
     "fcv_cwe78_base64_obfuscated",
     "swexploit",
+    "swexploit_anthropic",
     "swexploit_gemini_vertex",
     "swexploit_base64_obfuscated",
     "swexploit_gemini",

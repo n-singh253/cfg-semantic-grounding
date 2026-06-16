@@ -1,7 +1,7 @@
 name: llm_judge_claude37_sonnet_anthropic
 plugin: llm_judge
 provider: anthropic
-model: claude-sonnet-4-20250514
+model: claude-sonnet-4-6
 mode: raw
 temperature: 0.0
 reject_threshold: 0.5
