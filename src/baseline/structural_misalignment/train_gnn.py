@@ -75,6 +75,7 @@ def _build_graphs(
     llm_client: LLMClient,
     fidelity_mode: str,
     workers: int = 1,
+    cache_source_root: Path | None = None,
 ) -> tuple[List[Any], List[Dict[str, Any]]]:
     artifact_root.mkdir(parents=True, exist_ok=True)
     graph_config_hash = config_hash(config)
@@ -89,11 +90,14 @@ def _build_graphs(
             if fallback_metadata.exists():
                 return None
 
-        graph_dir = artifact_root / graph_key / "graph"
+        graph_dirs = [artifact_root / graph_key / "graph"]
+        if cache_source_root is not None and cache_source_root != artifact_root:
+            graph_dirs.append(cache_source_root / graph_key / "graph")
+        graph_dir = next((candidate for candidate in graph_dirs if (candidate / "graph.json").exists()), None)
+        if graph_dir is None:
+            return None
         graph_json = graph_dir / "graph.json"
         graph_pt = graph_dir / "graph.pt"
-        if not graph_json.exists():
-            return None
 
         graph_payload = json.loads(graph_json.read_text(encoding="utf-8"))
         hetero_graph = None
@@ -106,6 +110,7 @@ def _build_graphs(
                 hetero_graph = None
         if hetero_graph is None:
             hetero_graph = build_pyg_heterodata(graph_payload)
+        hetero_graph.attack_name = str(row.get("attack_name", "") or "")
 
         manifest_row = {
             "instance_id": row.get("instance_id", "unknown"),
@@ -149,6 +154,7 @@ def _build_graphs(
                 fidelity_mode=fidelity_mode,
                 graph_label=int(row.get("graph_label", 0)),
             )
+            hetero_graph.attack_name = str(row.get("attack_name", "") or "")
         except Exception as exc:
             raise RuntimeError(
                 "Failed to build structural graph for "
@@ -310,6 +316,27 @@ def _resolve_split_rows(
 
     benign_rows = _load_rows_from_paths(benign_paths, graph_label=0, limit=limit)
     malicious_rows = _load_rows_from_paths(malicious_paths, graph_label=1, limit=limit)
+    heldout_ids_path_value = str(data_config.get("heldout_instance_ids_path", "") or "").strip()
+    if heldout_ids_path_value:
+        heldout_ids_path = Path(heldout_ids_path_value)
+        if not heldout_ids_path.exists():
+            raise FileNotFoundError(f"Heldout instance-id file not found: {heldout_ids_path}")
+        heldout_ids = {
+            line.strip()
+            for line in heldout_ids_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        }
+        if not heldout_ids:
+            raise ValueError(f"Heldout instance-id file is empty: {heldout_ids_path}")
+        all_rows = benign_rows + malicious_rows
+        train_rows = [row for row in all_rows if str(row.get("instance_id", "")) not in heldout_ids]
+        test_rows = [row for row in all_rows if str(row.get("instance_id", "")) in heldout_ids]
+        if not train_rows or not test_rows:
+            raise ValueError(
+                "Fixed heldout split requires nonempty train and heldout rows; "
+                f"got train={len(train_rows)} heldout={len(test_rows)} from {heldout_ids_path}"
+            )
+        return train_rows, test_rows
     train_rows = _split_rows(benign_rows, "train") + _split_rows(malicious_rows, "train")
     test_rows = _split_rows(benign_rows, "test") + _split_rows(malicious_rows, "test")
     if not train_rows or not test_rows:
@@ -328,7 +355,8 @@ def _resolve_split_rows(
 def _counts_by(rows: List[Dict[str, Any]], key: str) -> Dict[str, int]:
     counts: Dict[str, int] = {}
     for row in rows:
-        value = str(row.get(key, "") or "")
+        raw_value = row.get(key, "")
+        value = "" if raw_value is None else str(raw_value)
         counts[value] = counts.get(value, 0) + 1
     return counts
 
@@ -423,6 +451,8 @@ def main() -> int:
 
     fidelity_mode = str(config.get("fidelity_mode", "llm"))
     graph_workers = int(args.graph_workers if args.graph_workers is not None else train_config.get("graph_workers", 1))
+    cache_source_value = str(train_config.get("graph_cache_source_dir", "") or "").strip()
+    cache_source_dir = Path(cache_source_value) if cache_source_value else None
     train_graphs, train_manifest = _build_graphs(
         train_rows,
         artifact_root=output_dir / "graphs" / "train",
@@ -430,6 +460,7 @@ def main() -> int:
         llm_client=llm_client,
         fidelity_mode=fidelity_mode,
         workers=graph_workers,
+        cache_source_root=cache_source_dir / "train" if cache_source_dir else None,
     )
     test_graphs, test_manifest = _build_graphs(
         test_rows,
@@ -438,6 +469,7 @@ def main() -> int:
         llm_client=llm_client,
         fidelity_mode=fidelity_mode,
         workers=graph_workers,
+        cache_source_root=cache_source_dir / "test" if cache_source_dir else None,
     )
     _write_graph_cache_index(output_dir, train_manifest, test_manifest)
     clear_embedding_encoder_cache()
@@ -453,6 +485,14 @@ def main() -> int:
         seed=int(train_config.get("seed", 42)),
         embedding_model_name=str(graph_config.get("embedding_model_name", "microsoft/codebert-base")),
         embedding_pooling=str(graph_config.get("embedding_pooling", "mean")),
+        sampling_strategy=str(train_config.get("sampling_strategy", "binary_balanced")),
+        use_raw_feature_residual=bool(train_config.get("use_raw_feature_residual", False)),
+        use_raw_aux_head=bool(train_config.get("use_raw_aux_head", False)),
+        raw_fusion_weight=float(train_config.get("raw_fusion_weight", 0.5)),
+        raw_aux_loss_weight=float(train_config.get("raw_aux_loss_weight", 1.0)),
+        fit_raw_logistic=bool(train_config.get("fit_raw_logistic", False)),
+        raw_logistic_c=float(train_config.get("raw_logistic_c", 0.1)),
+        raw_logistic_fusion_weight=float(train_config.get("raw_logistic_fusion_weight", 0.5)),
     )
     print(json.dumps(metrics, indent=2, sort_keys=True))
     return 0

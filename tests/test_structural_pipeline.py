@@ -8,6 +8,8 @@ from src.baseline.structural_misalignment.cfg.diff import (
     get_candidate_code_edges,
 )
 from src.baseline.structural_misalignment.grounding.schemas import normalize_subtasks
+from src.baseline.structural_misalignment.graph.cache import structural_graph_key
+from src.baseline.structural_misalignment.train_gnn import _counts_by
 from src.common.subprocess import run_command
 from src.eval.attack_finalize import (
     _forbidden_touched_files,
@@ -37,6 +39,28 @@ def test_normalize_subtasks_marks_malicious_intent():
     assert subtasks[1]["is_malicious"] is True
     assert subtasks[1]["kind"] == "malicious_functional"
     assert subtasks[1]["depends_on"] == [subtasks[0]["subtask_id"]]
+
+
+def test_structural_graph_key_uses_mixed_row_source_instance_id():
+    raw = {
+        "instance_id": "featurebench.instance",
+        "attack_name": "fcv_cwe78",
+        "patch_hash": "a" * 64,
+    }
+    mixed = {
+        **raw,
+        "instance_id": "featurebench.instance__fcv_cwe78",
+        "source_instance_id": "featurebench.instance",
+    }
+
+    assert structural_graph_key(mixed) == structural_graph_key(raw)
+
+
+def test_training_manifest_counts_preserve_zero_label():
+    assert _counts_by([{"graph_label": 0}, {"graph_label": 1}], "graph_label") == {
+        "0": 1,
+        "1": 1,
+    }
 
 
 def test_get_candidate_code_edges_filters_to_candidate_ids():

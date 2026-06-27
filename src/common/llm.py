@@ -348,6 +348,14 @@ class LLMClient:
         normalized = provider.strip().lower()
         if normalized == "openai":
             return self._call_openai(model=model, prompt=prompt, temperature=temperature, seed=seed)
+        if normalized == "openrouter":
+            return self._call_openrouter(
+                model=model,
+                prompt=prompt,
+                temperature=temperature,
+                seed=seed,
+                max_output_tokens=max_output_tokens,
+            )
         if normalized == "vllm":
             return self._call_vllm(model=model, prompt=prompt, temperature=temperature, seed=seed)
         if normalized == "gemini":
@@ -429,6 +437,48 @@ class LLMClient:
         }
         if seed is not None:
             payload["seed"] = seed
+        resp = client.chat.completions.create(**payload)
+        text = (resp.choices[0].message.content or "").strip()
+        usage = {}
+        if getattr(resp, "usage", None) is not None:
+            usage = {
+                "prompt_tokens": getattr(resp.usage, "prompt_tokens", None),
+                "completion_tokens": getattr(resp.usage, "completion_tokens", None),
+                "total_tokens": getattr(resp.usage, "total_tokens", None),
+            }
+        return text, usage
+
+    @staticmethod
+    def _call_openrouter(
+        *,
+        model: str,
+        prompt: str,
+        temperature: float,
+        seed: Optional[int],
+        max_output_tokens: Optional[int] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        from openai import OpenAI  # pragma: no cover - optional dependency.
+
+        api_key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENROUTER_API_KEY or LLM_API_KEY is not set")
+
+        model_name = model
+        if model_name.startswith("openrouter/"):
+            model_name = model_name[len("openrouter/") :]
+        client = OpenAI(
+            base_url=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            api_key=api_key,
+        )
+        payload: Dict[str, Any] = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+        }
+        if seed is not None:
+            payload["seed"] = seed
+        if max_output_tokens is not None:
+            payload["max_tokens"] = max_output_tokens
         resp = client.chat.completions.create(**payload)
         text = (resp.choices[0].message.content or "").strip()
         usage = {}

@@ -194,6 +194,11 @@ def build_scoped_cfg_for_files(
                     node_id = str(node.get("node_id", ""))
                     if node_id.startswith(str(full_path)):
                         node["node_id"] = node_id.replace(str(full_path), file_path, 1)
+                for edge in func_cfg.get("edges", []):
+                    for endpoint in ("src", "dst"):
+                        node_id = str(edge.get(endpoint, ""))
+                        if node_id.startswith(str(full_path)):
+                            edge[endpoint] = node_id.replace(str(full_path), file_path, 1)
             file_cfg["file_path"] = file_path
 
         result["files"][file_path] = file_cfg

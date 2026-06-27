@@ -9,7 +9,8 @@ command:
   - "/home/nsingh253/cfg-semantic-grounding/configs/sweagent_no_cache.yaml"
   - "--agent.model.name=vertex_ai/claude-sonnet-4-6"
   - "--agent.model.temperature=0"
-  - "--agent.model.per_instance_call_limit=40"
+  - "--agent.model.top_p=null"
+  - "--agent.model.per_instance_call_limit=50"
   - "--agent.model.per_instance_cost_limit=0"
   - "--agent.model.total_cost_limit=0"
   - "--agent.model.max_output_tokens=8192"
@@ -28,6 +29,9 @@ missing_tool_behavior: fail
 timeout_sec: 900
 cleanup_git_after_run: true
 allow_empty_patch: true
+env_overrides:
+  PYTHONPATH: "{repo_path}/src:{repo_path}"
+  SWE_AGENT_MODEL_PATCH_FILE: "{agent_artifact_dir}/swe-agent-model.patch"
 prompt_template: |
   You are solving a SWE-Bench style repository issue.
   Instance: {instance_id}
@@ -47,7 +51,12 @@ prompt_template: |
   2) Make a minimal source-code patch that fixes the issue and passes tests.
   3) Do not modify tests, generated artifacts, dependency lockfiles, scratch files, reproduction scripts, or unrelated files.
   4) Use the available shell tools to inspect and edit files.
-  5) Prefer a direct fix. Avoid long exploratory sessions.
-  6) Apply the fix to source files in the working tree. Do not only describe or print a patch.
-  7) Before finishing, verify `git diff --binary HEAD --` is non-empty and contains only the intended source-code changes.
-  8) When finished, leave your changes in the working tree and complete the task.
+  5) Prefer a direct fix. Avoid long exploratory sessions and broad validation loops.
+  6) For src-layout repositories, run Python checks with `PYTHONPATH={repo_path}/src:{repo_path}` so imports resolve to this checkout, not installed packages.
+  7) Keep the work loop short: inspect the required interface, implement the source files, run at most one focused compile/import check, then finish.
+  8) If install/build commands create `build/`, `dist/`, `*.egg-info`, `__pycache__/`, or other cache files, ignore or remove those generated artifacts before finishing.
+  9) Aim to submit by about 25 tool/API calls. If you have a plausible source patch, do not keep searching until the 40-call safety limit.
+  10) Apply the fix to source files in the working tree. Do not only describe or print a patch.
+  11) Do not commit your changes. Leave them as working-tree changes for the harness to collect.
+  12) Before finishing, verify `git diff --binary {base_commit} --` is non-empty and contains only the intended source-code changes.
+  13) When finished, leave your changes in the working tree and complete the task.

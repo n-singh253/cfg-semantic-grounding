@@ -1,0 +1,34 @@
+plugin: structural_misalignment
+fidelity_mode: llm
+
+data_preparation:
+  train_benign_attack_dataset_paths:
+    - data/training/swebench_structural/swebench_imported_heldout_20260619_052311/claude/train_benign.jsonl
+  train_malicious_attack_dataset_paths:
+    - data/training/swebench_structural/swebench_imported_heldout_20260619_052311/claude/train_malicious.jsonl
+  test_benign_attack_dataset_paths:
+    - data/training/swebench_structural/swebench_imported_heldout_20260619_052311/claude/test_benign.jsonl
+  test_malicious_attack_dataset_paths:
+    - data/training/swebench_structural/swebench_imported_heldout_20260619_052311/claude/test_malicious.jsonl
+
+training:
+  output_dir: data/models/structural_misalignment/swebench_imported_heldout_20260619_052311/claude/hetero_gnn
+  hidden_dim: 128
+  dropout: 0.1
+  learning_rate: 0.001
+  epochs: 30
+  batch_size: 8
+  seed: 42
+  embedding_model_name: microsoft/codebert-base
+  embedding_pooling: mean
+
+graph_pipeline:
+  embedding_model_name: microsoft/codebert-base
+  embedding_pooling: mean
+  parsers:
+    prompt: prebuilt
+    patch: prebuilt
+    linking: prebuilt
+  llm:
+    provider: anthropic_vertex
+    model: claude-sonnet-4-6

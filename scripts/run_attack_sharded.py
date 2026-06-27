@@ -15,7 +15,7 @@ from typing import Any, Dict, List, TextIO
 
 import src.dataset  # noqa: F401
 from src.common.artifact_store import atomic_write_json, atomic_write_text
-from src.common.config import load_component_config
+from src.common.config import config_hash, load_component_config
 from src.dataset.registry import get_dataset
 from src.eval.attack_finalize import _validate_attack_row
 from src.eval.report import load_jsonl_rows
@@ -35,6 +35,8 @@ RunningShard = tuple[
     TextIO,
     TextIO,
 ]
+
+EMPTY_PATCH_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 
 def _dataset_attack_dir(dataset: str, attack: str) -> str:
@@ -85,6 +87,9 @@ def _completed_instance_ids(
     dataset: str,
     agent: str,
     attack: str,
+    dataset_hash: str,
+    agent_hash: str,
+    attack_hash: str,
     allowed_ids: set[str],
 ) -> set[str]:
     completed: set[str] = set()
@@ -102,6 +107,21 @@ def _completed_instance_ids(
                 continue
             if str(row.get("attack_name", "") or "") != attack:
                 continue
+            if str(row.get("dataset_config_hash", "") or "") != dataset_hash:
+                continue
+            if str(row.get("agent_config_hash", "") or "") != agent_hash:
+                continue
+            if str(row.get("attack_config_hash", "") or "") != attack_hash:
+                continue
+            patch_hash = str(row.get("patch_hash", "") or row.get("adv_patch_hash", "") or "")
+            if patch_hash == EMPTY_PATCH_HASH:
+                continue
+            patch_artifacts = row.get("patch_artifacts")
+            if isinstance(patch_artifacts, dict):
+                patch_path = patch_artifacts.get("adv_patch_path") or patch_artifacts.get("patch_path")
+                if patch_path and Path(str(patch_path)).exists():
+                    if not Path(str(patch_path)).read_text(encoding="utf-8").strip():
+                        continue
             completed.add(instance_id)
     return completed
 
@@ -112,6 +132,9 @@ def _finalized_instance_ids(
     dataset: str,
     agent: str,
     attack: str,
+    dataset_hash: str,
+    agent_hash: str,
+    attack_hash: str,
     allowed_ids: set[str],
 ) -> set[str]:
     path = final_out / "attack_dataset.jsonl"
@@ -129,8 +152,19 @@ def _finalized_instance_ids(
             continue
         if str(row.get("attack_name", "") or "") != attack:
             continue
+        if str(row.get("dataset_config_hash", "") or "") != dataset_hash:
+            continue
+        if str(row.get("agent_config_hash", "") or "") != agent_hash:
+            continue
+        if str(row.get("attack_config_hash", "") or "") != attack_hash:
+            continue
         finalized.add(instance_id)
     return finalized
+
+
+def _has_finalized_dataset(final_out: Path) -> bool:
+    path = final_out / "attack_dataset.jsonl"
+    return path.exists()
 
 
 def _unique_paths(paths: List[Path]) -> List[Path]:
@@ -149,6 +183,27 @@ def _result_line_count(path: Path) -> int:
     if not path.exists():
         return 0
     return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+
+def _current_config_hashes(
+    *,
+    config_dir: Path,
+    dataset: str,
+    agent: str,
+    attack: str,
+    dataset_data_path: str | None,
+) -> Dict[str, str]:
+    dataset_cfg = load_component_config(config_dir, "datasets", dataset)
+    if dataset_data_path:
+        dataset_cfg = dict(dataset_cfg)
+        dataset_cfg["data_path"] = dataset_data_path
+    agent_cfg = load_component_config(config_dir, "agents", agent)
+    attack_cfg = load_component_config(config_dir, "attacks", attack)
+    return {
+        "dataset": config_hash(dataset_cfg),
+        "agent": config_hash(agent_cfg),
+        "attack": config_hash(attack_cfg),
+    }
 
 
 def _run_shards(
@@ -281,17 +336,28 @@ def _finalize_merged_attack_dataset(
     dataset: str,
     agent: str,
     attack: str,
+    dataset_hash: str,
+    agent_hash: str,
+    attack_hash: str,
     shard_dirs: List[Path],
 ) -> Dict[str, Any]:
-    """Finalize all compatible merged rows, including rows from resumed config hashes."""
+    """Finalize compatible merged rows for the current config hashes only."""
     rows_by_instance_id: Dict[str, Dict[str, Any]] = {}
     duplicate_instances = 0
+    skipped_hash_mismatch = 0
     for row in load_jsonl_rows(out_dir / "attack_results.jsonl"):
         if str(row.get("dataset", "") or "") != dataset:
             continue
         if str(row.get("agent_name", "") or "") != agent:
             continue
         if str(row.get("attack_name", "") or "") != attack:
+            continue
+        if (
+            str(row.get("dataset_config_hash", "") or "") != dataset_hash
+            or str(row.get("agent_config_hash", "") or "") != agent_hash
+            or str(row.get("attack_config_hash", "") or "") != attack_hash
+        ):
+            skipped_hash_mismatch += 1
             continue
         instance_id = str(row.get("instance_id", "") or "")
         if instance_id in rows_by_instance_id:
@@ -368,6 +434,12 @@ def _finalize_merged_attack_dataset(
         "merged_from_shards": [str(path) for path in shard_dirs],
         "agent_config_hashes": dict(sorted(agent_hashes.items())),
         "duplicate_instances_skipped": duplicate_instances,
+        "skipped_hash_mismatch": skipped_hash_mismatch,
+        "current_config_hashes": {
+            "dataset": dataset_hash,
+            "agent": agent_hash,
+            "attack": attack_hash,
+        },
     }
     atomic_write_json(out_dir / "attack_preprocessing_summary.json", summary)
     return summary
@@ -416,6 +488,13 @@ def main() -> int:
     shard_base = run_root / "shards"
     final_out = run_root / _dataset_attack_dir(args.dataset, args.attack)
     final_out.mkdir(parents=True, exist_ok=True)
+    current_hashes = _current_config_hashes(
+        config_dir=config_dir,
+        dataset=args.dataset,
+        agent=args.agent,
+        attack=args.attack,
+        dataset_data_path=args.dataset_data_path,
+    )
 
     existing_shard_dirs = _matching_existing_shard_dirs(shard_base, args.dataset, args.attack)
     completed_ids: set[str] = set()
@@ -425,14 +504,33 @@ def main() -> int:
             dataset=args.dataset,
             agent=args.agent,
             attack=args.attack,
+            dataset_hash=current_hashes["dataset"],
+            agent_hash=current_hashes["agent"],
+            attack_hash=current_hashes["attack"],
             allowed_ids=set(ids),
         )
+        if not _has_finalized_dataset(final_out):
+            completed_ids.update(
+                _completed_instance_ids(
+                    existing_shard_dirs,
+                    dataset=args.dataset,
+                    agent=args.agent,
+                    attack=args.attack,
+                    dataset_hash=current_hashes["dataset"],
+                    agent_hash=current_hashes["agent"],
+                    attack_hash=current_hashes["attack"],
+                    allowed_ids=set(ids),
+                )
+            )
     elif not args.no_global_resume:
         completed_ids = _completed_instance_ids(
             existing_shard_dirs,
             dataset=args.dataset,
             agent=args.agent,
             attack=args.attack,
+            dataset_hash=current_hashes["dataset"],
+            agent_hash=current_hashes["agent"],
+            attack_hash=current_hashes["attack"],
             allowed_ids=set(ids),
         )
     pending_ids = [instance_id for instance_id in ids if instance_id not in completed_ids]
@@ -480,6 +578,7 @@ def main() -> int:
         "global_resume_enabled": not args.no_global_resume,
         "retry_discarded": args.retry_discarded,
         "dataset_data_path": args.dataset_data_path or "",
+        "current_config_hashes": current_hashes,
         "shards": len(chunks),
         "parallel": args.parallel,
         "final_out": str(final_out),
@@ -512,6 +611,9 @@ def main() -> int:
         dataset=args.dataset,
         agent=args.agent,
         attack=args.attack,
+        dataset_hash=current_hashes["dataset"],
+        agent_hash=current_hashes["agent"],
+        attack_hash=current_hashes["attack"],
         shard_dirs=merge_dirs,
     )
     print(

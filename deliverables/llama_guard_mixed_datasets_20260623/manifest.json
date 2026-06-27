@@ -1,0 +1,232 @@
+{
+  "bundle_version": 1,
+  "datasets": [
+    {
+      "attack_name_counts": {
+        "fcv_cwe78": 42,
+        "none": 136
+      },
+      "attack_rows": 42,
+      "clean_rows": 136,
+      "id": "swebench_nonobfuscated_gemini_fcv78",
+      "path": "datasets/swebench_nonobfuscated_gemini_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_nonobfuscated/gemini/fcv78",
+      "rows": 178,
+      "sha256": "02234d3d65ee8083a86412c5597cb19cdcf24704ecbd8629be4ea8e03e9b426d",
+      "source": "outputs/attacks/gemini3_flash_swebench_imported/mixed/swebench_none_vs_fcv_cwe78/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 136,
+        "swexploit_anthropic": 180
+      },
+      "attack_rows": 180,
+      "clean_rows": 136,
+      "id": "swebench_nonobfuscated_gemini_swexploit",
+      "path": "datasets/swebench_nonobfuscated_gemini_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_nonobfuscated/gemini/swexploit",
+      "rows": 316,
+      "sha256": "b4efb828d5ae1d7b95f89804fefb0f285dbc5a75d387b57862fc770bb02a990b",
+      "source": "outputs/attacks/gemini3_flash_swebench_imported/mixed/swebench_none_vs_swexploit_anthropic/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "fcv_cwe78": 14,
+        "none": 56
+      },
+      "attack_rows": 14,
+      "clean_rows": 56,
+      "id": "swebench_nonobfuscated_claude_fcv78",
+      "path": "datasets/swebench_nonobfuscated_claude_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_nonobfuscated/claude/fcv78",
+      "rows": 70,
+      "sha256": "4c9dd7b38222461741b40cf0734a0c27ab0f55720524f9defc287a57eeb189e0",
+      "source": "outputs/attacks/claude_sonnet46_swebench_imported/mixed/swebench_none_vs_fcv_cwe78/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 56,
+        "swexploit_anthropic": 49
+      },
+      "attack_rows": 49,
+      "clean_rows": 56,
+      "id": "swebench_nonobfuscated_claude_swexploit",
+      "path": "datasets/swebench_nonobfuscated_claude_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_nonobfuscated/claude/swexploit",
+      "rows": 105,
+      "sha256": "3c9aa37028235547535674170d4c5b01365c46b9fee0e44437172fae89c3acdf",
+      "source": "outputs/attacks/claude_sonnet46_swebench_imported/mixed/swebench_none_vs_swexploit_anthropic/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "fcv_cwe78": 35,
+        "none": 116
+      },
+      "attack_rows": 35,
+      "clean_rows": 116,
+      "id": "featurebench_nonobfuscated_gemini_fcv78",
+      "path": "datasets/featurebench_nonobfuscated_gemini_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/featurebench_nonobfuscated/gemini/fcv78",
+      "rows": 151,
+      "sha256": "ce2e650af096f5a661e4c84091ba1b0aeb644c170ab15e582971f4eb06199b02",
+      "source": "outputs/attacks/gemini3_flash_socal/mixed/featurebench_full_none_vs_fcv_cwe78/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 116,
+        "swexploit_anthropic": 147
+      },
+      "attack_rows": 147,
+      "clean_rows": 116,
+      "id": "featurebench_nonobfuscated_gemini_swexploit",
+      "path": "datasets/featurebench_nonobfuscated_gemini_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/featurebench_nonobfuscated/gemini/swexploit",
+      "rows": 263,
+      "sha256": "0db58e527d1d5fa7e87f2fb40da84fc62d19dca67482b7cf62ce558b32140376",
+      "source": "outputs/attacks/gemini3_flash_socal/mixed/featurebench_full_none_vs_swexploit_anthropic/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "fcv_cwe78": 71,
+        "none": 115
+      },
+      "attack_rows": 71,
+      "clean_rows": 115,
+      "id": "featurebench_nonobfuscated_claude_fcv78",
+      "path": "datasets/featurebench_nonobfuscated_claude_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/featurebench_nonobfuscated/claude/fcv78",
+      "rows": 186,
+      "sha256": "342a53ae3169a04a5cf4c29905a61c7f5604a96734aa842b2c50eb2dad3775da",
+      "source": "outputs/attacks/claude_sonnet46_socal/mixed/featurebench_full_none_vs_fcv_cwe78/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 115,
+        "swexploit_anthropic": 118
+      },
+      "attack_rows": 118,
+      "clean_rows": 115,
+      "id": "featurebench_nonobfuscated_claude_swexploit",
+      "path": "datasets/featurebench_nonobfuscated_claude_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/featurebench_nonobfuscated/claude/swexploit",
+      "rows": 233,
+      "sha256": "376c7d6146888a3ed14edf59162b7fb93707f40526465c7f59cd9099b9301107",
+      "source": "outputs/attacks/claude_sonnet46_socal/mixed/featurebench_full_none_vs_swexploit_anthropic/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "fcv_cwe78_base64_obfuscated": 963,
+        "none": 1042
+      },
+      "attack_rows": 963,
+      "clean_rows": 1042,
+      "id": "livecodebench_obfuscated_gemini_fcv78",
+      "path": "datasets/livecodebench_obfuscated_gemini_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/livecodebench_obfuscated/gemini/fcv78",
+      "rows": 2005,
+      "sha256": "200187b0323993410e80ed6e5da642509503a106634b99280e7b153bb462892e",
+      "source": "outputs/attacks/gemini3_flash/mixed/livecodebench_none_vs_fcv_cwe78_base64_obfuscated/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 1042,
+        "swexploit_base64_obfuscated": 304
+      },
+      "attack_rows": 304,
+      "clean_rows": 1042,
+      "id": "livecodebench_obfuscated_gemini_swexploit",
+      "path": "datasets/livecodebench_obfuscated_gemini_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/livecodebench_obfuscated/gemini/swexploit",
+      "rows": 1346,
+      "sha256": "0d086da0da757019c2597c11f0ef6f8037fe578dc22c17e5683e0da94aa7a518",
+      "source": "outputs/attacks/gemini3_flash/mixed/livecodebench_none_vs_swexploit_base64_obfuscated/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "fcv_cwe78_base64_obfuscated": 733,
+        "none": 605
+      },
+      "attack_rows": 733,
+      "clean_rows": 605,
+      "id": "livecodebench_obfuscated_claude_fcv78",
+      "path": "datasets/livecodebench_obfuscated_claude_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/livecodebench_obfuscated/claude/fcv78",
+      "rows": 1338,
+      "sha256": "8cf4cb2a9452211e03584c855189998330176612ad8ee33101680ce9bc605d18",
+      "source": "outputs/attacks/claude37_sonnet_sweagent/mixed/livecodebench_none_vs_fcv_cwe78_base64_obfuscated/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 605,
+        "swexploit_base64_obfuscated": 127
+      },
+      "attack_rows": 127,
+      "clean_rows": 605,
+      "id": "livecodebench_obfuscated_claude_swexploit",
+      "path": "datasets/livecodebench_obfuscated_claude_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/livecodebench_obfuscated/claude/swexploit",
+      "rows": 732,
+      "sha256": "bc57f6e2242a9d8172e1c1accd7db4cf64a99fa5c3ee1f0113a503fcdfff60e5",
+      "source": "outputs/attacks/claude37_sonnet_sweagent/mixed/livecodebench_none_vs_swexploit_base64_obfuscated/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "fcv_cwe78_base64_obfuscated": 174,
+        "none": 300
+      },
+      "attack_rows": 174,
+      "clean_rows": 300,
+      "id": "swebench_obfuscated_gemini_fcv78",
+      "path": "datasets/swebench_obfuscated_gemini_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_obfuscated/gemini/fcv78",
+      "rows": 474,
+      "sha256": "9d9dafa52581fd67106feb9022896c15769374413b6638bf31d38c66a5e4acc0",
+      "source": "outputs/attacks/gemini3_flash/mixed/swebench_lite_none_vs_fcv_cwe78_base64_obfuscated/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 300,
+        "swexploit_base64_obfuscated": 124
+      },
+      "attack_rows": 124,
+      "clean_rows": 300,
+      "id": "swebench_obfuscated_gemini_swexploit",
+      "path": "datasets/swebench_obfuscated_gemini_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_obfuscated/gemini/swexploit",
+      "rows": 424,
+      "sha256": "b0168e034359f8b086cbbf9542e7926ec3ca751c5f8c0380f54e2e29aa5f76f3",
+      "source": "outputs/attacks/gemini3_flash/mixed/swebench_lite_none_vs_swexploit_base64_obfuscated/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "fcv_cwe78_base64_obfuscated": 46,
+        "none": 300
+      },
+      "attack_rows": 46,
+      "clean_rows": 300,
+      "id": "swebench_obfuscated_claude_fcv78",
+      "path": "datasets/swebench_obfuscated_claude_fcv78.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_obfuscated/claude/fcv78",
+      "rows": 346,
+      "sha256": "084717a3bc36372b76aa45c83d64d46098f9cbda4cbb7e71fc791cdd3997a381",
+      "source": "outputs/attacks/claude37_sonnet_sweagent/mixed/swebench_lite_none_vs_fcv_cwe78_base64_obfuscated/full/attack_dataset.jsonl"
+    },
+    {
+      "attack_name_counts": {
+        "none": 300,
+        "swexploit_base64_obfuscated": 41
+      },
+      "attack_rows": 41,
+      "clean_rows": 300,
+      "id": "swebench_obfuscated_claude_swexploit",
+      "path": "datasets/swebench_obfuscated_claude_swexploit.jsonl",
+      "result_relpath": "portable_llama_guard/swebench_obfuscated/claude/swexploit",
+      "rows": 341,
+      "sha256": "32d782fde343a219b081255c00338ef2ee291bf2dc0bdd3bac5240dcdfc7d06e",
+      "source": "outputs/attacks/claude37_sonnet_sweagent/mixed/swebench_lite_none_vs_swexploit_base64_obfuscated/full/attack_dataset.jsonl"
+    }
+  ],
+  "purpose": "Portable classifier-only Llama Guard evaluation",
+  "total_datasets": 16,
+  "total_rows": 8508
+}

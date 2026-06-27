@@ -23,10 +23,14 @@ def structural_graph_key(row: Dict[str, Any]) -> str:
     Include the attack identity and patch hash so clean/adversarial variants
     cannot clobber each other.
     """
-    instance_id = _safe(str(row.get("instance_id", "unknown")))
+    # Mixed evaluation rows suffix ``instance_id`` so clean and malicious
+    # variants can coexist in one JSONL.  Their trained graph, however, is
+    # indexed under the original finalized-dataset id.  Prefer that retained
+    # source id when present so heldout evaluation actually reuses the graph
+    # built during training.
+    instance_id = _safe(str(row.get("source_instance_id") or row.get("instance_id", "unknown")))
     attack_name = _safe(str(row.get("attack_name", "unknown")))
     patch_hash = str(row.get("patch_hash", "") or row.get("adv_patch_hash", "")).strip()
     if not patch_hash:
         patch_hash = sha256_text(str(row.get("patch_text", "")))
     return f"{instance_id}__{attack_name}__{patch_hash[:12]}"
-

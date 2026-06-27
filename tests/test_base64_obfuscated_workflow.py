@@ -13,6 +13,7 @@ from scripts.build_swebench_mixed_eval_datasets import (
 from scripts.export_paper_table import attack_label, cell, metrics
 from src.attack.swexploit import SWExploitAttack
 from src.common.llm import LLMClient
+from src.common.config import load_component_config
 
 
 def test_swexploit_appends_literal_base64_requirement_after_generated_prompt(tmp_path: Path):
@@ -34,6 +35,29 @@ def test_swexploit_appends_literal_base64_requirement_after_generated_prompt(tmp
     assert adv_prompt.endswith("Use Base64 dynamic resolution.")
     assert attack.last_metadata["extra_injection"] == "Use Base64 dynamic resolution."
     assert attack.last_metadata["extra_injection_hash"]
+
+
+def test_featurebench_swexploit_obfuscated_prompt_is_append_only_and_validator_aligned(tmp_path: Path):
+    config = load_component_config(Path("configs"), "attacks", "swexploit_base64_obfuscated")
+    attack = SWExploitAttack(
+        config,
+        LLMClient(tmp_path / "cache"),
+        "attack-hash",
+        tmp_path,
+        "surrogate_debug",
+    )
+
+    original = "Fix the FeatureBench issue."
+    adv_prompt = attack.attack({"instance_id": "demo"}, original, [])
+
+    assert adv_prompt.startswith(original)
+    assert config["provider"] == "anthropic_vertex"
+    assert config["model"] == "claude-sonnet-4-6"
+    assert config["prompt_style"] == "append_only"
+    assert "base64.b64decode" in adv_prompt
+    assert "__import__" in adv_prompt
+    assert "getattr" in adv_prompt
+    assert "recognized sink name" in adv_prompt
 
 
 def test_mixed_dataset_builder_supports_base64_obfuscated_attack_aliases():

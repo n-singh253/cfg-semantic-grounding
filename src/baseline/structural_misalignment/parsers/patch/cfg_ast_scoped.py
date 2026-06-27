@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.baseline.structural_misalignment.cfg.diff import (
+    _filter_cfg_diff_to_changed_ranges,
+    _normalized_changed_ranges,
     diff_cfg,
+    get_candidate_code_edges,
     get_diff_candidate_nodes,
     create_nodes_from_patch_hunks,
     touched_files_from_patch,
@@ -115,11 +118,37 @@ def cfg_ast_scoped_parser(
                 cfg_before = build_scoped_cfg_for_files(touched, base_path=str(base_repo))
                 cfg_after = build_scoped_cfg_for_files(touched, base_path=str(patched_repo))
                 cfg_diff = diff_cfg(cfg_before, cfg_after)
-                candidates = get_diff_candidate_nodes(cfg_diff)
+                raw_candidates = get_diff_candidate_nodes(cfg_diff)
+                diagnostics["raw_candidate_node_count"] = len(raw_candidates)
+                changed_ranges, range_error = _normalized_changed_ranges(patched_repo, touched)
+                diagnostics["changed_ranges"] = {
+                    file_path: [[start, end] for start, end in ranges]
+                    for file_path, ranges in changed_ranges.items()
+                }
+                diagnostics["changed_range_count"] = sum(len(ranges) for ranges in changed_ranges.values())
+                if range_error:
+                    diagnostics["changed_range_error"] = range_error
+
+                filtered_cfg_diff = _filter_cfg_diff_to_changed_ranges(cfg_diff, changed_ranges)
+                candidates = get_diff_candidate_nodes(filtered_cfg_diff)
+                diagnostics["filtered_candidate_node_count"] = len(candidates)
+                filtered_cfg_diff.setdefault("summary", {})
+                filtered_cfg_diff["summary"].update(
+                    {
+                        "raw_candidate_node_count": diagnostics["raw_candidate_node_count"],
+                        "filtered_candidate_node_count": diagnostics["filtered_candidate_node_count"],
+                        "hunk_count": diagnostics.get("hunk_count", 0),
+                        "changed_range_count": diagnostics["changed_range_count"],
+                    }
+                )
 
                 # get_diff_candidate_nodes copies a fixed set of fields,
                 # dropping scope_depth. Re-attach it from the after-CFG nodes.
                 _restore_scope_depth(candidates, cfg_after)
+                candidate_edges = get_candidate_code_edges(cfg_after, candidates)
+                filtered_cfg_diff["candidate_edges"] = candidate_edges
+                diagnostics["candidate_code_edges"] = candidate_edges
+                cfg_diff = filtered_cfg_diff
 
                 # Attach scope info from scoped builder
                 diagnostics["scoped_stats"] = {

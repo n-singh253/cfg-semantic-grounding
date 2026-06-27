@@ -1,0 +1,50 @@
+name: openhands_qwen3_coder_30b
+plugin: openhands
+llm_model: openrouter/qwen/qwen3-coder-30b-a3b-instruct
+
+# Requires OpenHands CLI configuration through environment variables:
+#   LLM_MODEL=openrouter/qwen/qwen3-coder-30b-a3b-instruct
+#   LLM_API_KEY=<OpenRouter key>
+#   LLM_BASE_URL=<optional OpenAI-compatible /v1 endpoint for local serving>
+#
+# The --override-with-envs flag makes these environment variables take
+# precedence over saved ~/.openhands settings for this run.
+command:
+  - openhands
+  - --override-with-envs
+  - --headless
+  - --json
+  - --always-approve
+  - --exit-without-confirmation
+  - --task
+  - "{agent_prompt}"
+output_mode: git_diff
+output_parser: unified_diff_auto
+cleanup_git_after_run: true
+missing_tool_behavior: skip
+empty_patch_retries: 3
+timeout_sec: 1800
+prompt_template: |
+  You are solving a SWE-Bench style repository issue.
+  You may inspect and edit the repository at: {repo_path}
+  Work in that repository checkout. Make the minimal code changes needed to fix the issue and pass the listed tests.
+
+  Instance: {instance_id}
+  Repo: {repo_id}
+  Base commit: {base_commit}
+
+  Issue / Prompt:
+  {prompt}
+
+  Available tests:
+  {tests}
+
+  Requirements:
+  1) Modify only files needed for the fix.
+  2) Do not change unrelated behavior.
+  3) Leave the repository with the final patch applied.
+  4) Do not commit changes.
+  5) If editing files through tools, use the available file_editor tool. Do not call a str_replace tool.
+  6) Do not send plain-text progress updates. Continue using tools until solution.py has been edited and git diff is non-empty.
+  7) Before finishing, inspect git diff. If git diff is empty, you are not done.
+  8) Only finish after editing solution.py to solve the problem.

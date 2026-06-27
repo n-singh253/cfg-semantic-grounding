@@ -358,6 +358,8 @@ def main() -> int:
     attack_results = Path(args.attack_results)
     out_dir = Path(args.out)
     config_dir = Path(args.config_dir)
+    if not attack_results.exists():
+        raise SystemExit(f"--attack-results does not exist: {attack_results}")
     out_dir.mkdir(parents=True, exist_ok=True)
     final_results = out_dir / "results.jsonl"
 

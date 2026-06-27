@@ -34,6 +34,7 @@ from src.eval.report import load_jsonl_rows, write_summary_csv
 
 
 SCHEMA_VERSION = "v1"
+EMPTY_PATCH_HASH = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 try:
     from tqdm import tqdm as _tqdm
@@ -178,7 +179,21 @@ def _row_matches_resume_target(
         return False
     if baseline_hash is not None and str(row.get("baseline_config_hash", "")) != baseline_hash:
         return False
+    if not _row_has_nonempty_patch(row):
+        return False
     return True
+
+
+def _row_has_nonempty_patch(row: Dict[str, Any]) -> bool:
+    patch_hash = str(row.get("patch_hash", "") or row.get("adv_patch_hash", "") or "")
+    if patch_hash == EMPTY_PATCH_HASH:
+        return False
+    patch_artifacts = row.get("patch_artifacts")
+    if isinstance(patch_artifacts, dict):
+        patch_path = patch_artifacts.get("adv_patch_path") or patch_artifacts.get("patch_path")
+        if patch_path and Path(str(patch_path)).exists():
+            return bool(Path(str(patch_path)).read_text(encoding="utf-8").strip())
+    return bool(patch_hash)
 
 
 def _write_patch_artifacts(
@@ -791,6 +806,7 @@ def run_defense(
         start_ts = utc_now()
         repo_code = {
             "instance_id": instance_id,
+            "source_instance_id": attack_row.get("source_instance_id", ""),
             "dataset": attack_row.get("dataset", ""),
             "split": attack_row.get("split", ""),
             "repo_id": attack_row.get("repo_id", ""),
