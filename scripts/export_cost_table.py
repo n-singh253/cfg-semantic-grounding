@@ -163,6 +163,91 @@ def find_cache_tokens(run_dir: Path) -> dict[str, Any]:
     }
 
 
+def _graph_root_from_graph_json(path_value: Any) -> Path | None:
+    if not path_value:
+        return None
+    graph_json = Path(str(path_value))
+    if graph_json.name != "graph.json":
+        return None
+    if graph_json.parent.name != "graph":
+        return None
+    return graph_json.parent.parent
+
+
+def find_prebuilt_graph_tokens(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Attribute token usage from prebuilt structural graph artifacts.
+
+    Some selected SWEGuard/Ours evaluation runs reuse graphs built during model
+    training.  The evaluation rows then correctly have ``graph_cache_hit=True``
+    and no per-row LLM cache, but a paper cost table should attribute the LLM
+    calls that built those referenced graphs.  This function follows each
+    result row's ``defense_signals.artifact_paths.graph_json`` to the graph root
+    and aggregates token usage from the graph's subtask chunk metadata.
+    """
+    totals: dict[str, float] = defaultdict(float)
+    calls = 0
+    billable_calls = 0
+    models: set[str] = set()
+    providers: set[str] = set()
+    cache_hits = 0
+    cache_misses = 0
+    graph_roots: set[Path] = set()
+    seen: set[tuple[str, str, str]] = set()
+
+    for row in rows:
+        signals = row.get("defense_signals")
+        if not isinstance(signals, dict):
+            continue
+        artifacts = signals.get("artifact_paths")
+        if not isinstance(artifacts, dict):
+            continue
+        graph_root = _graph_root_from_graph_json(artifacts.get("graph_json"))
+        if graph_root is not None and graph_root.exists():
+            graph_roots.add(graph_root)
+
+    for graph_root in sorted(graph_roots):
+        for path in sorted((graph_root / "subtasks").glob("**/metadata.json")):
+            payload = load_json(path)
+            usage = normalized_usage(payload.get("token_usage"))
+            if not any(usage.values()):
+                continue
+            dedupe_key = (
+                str(payload.get("provider", "")),
+                str(payload.get("model", "")),
+                str(payload.get("cache_key") or path),
+            )
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            call_count = int(payload.get("call_count") or 1)
+            calls += call_count
+            add_usage(totals, usage)
+            cache_hit = bool(payload.get("cache_hit", False))
+            if cache_hit:
+                cache_hits += call_count
+            else:
+                cache_misses += call_count
+                billable_calls += call_count
+                add_usage(totals, usage, "billable_")
+            if payload.get("provider"):
+                providers.add(str(payload["provider"]))
+            if payload.get("model"):
+                models.add(str(payload["model"]))
+
+    return {
+        "source": "prebuilt_graph_artifacts" if calls else "",
+        "llm_calls": calls,
+        "billable_llm_calls": billable_calls,
+        "cache_hits": cache_hits,
+        "cache_misses": cache_misses,
+        "providers": sorted(providers),
+        "models": sorted(models),
+        "attributed_graph_count": len(graph_roots),
+        **totals,
+    }
+
+
 def runtime_summary(rows: list[dict[str, Any]]) -> dict[str, float]:
     defense = [
         float(row["defense_runtime_sec"])
@@ -243,6 +328,8 @@ def summarize_run(selection: dict[str, str], rates: dict[str, dict[str, float]])
     token_summary = find_result_tokens(rows)
     if not token_summary.get("llm_calls"):
         token_summary = find_cache_tokens(run_dir)
+    if not token_summary.get("llm_calls"):
+        token_summary = find_prebuilt_graph_tokens(rows)
 
     providers = token_summary.get("providers") or []
     models = token_summary.get("models") or []

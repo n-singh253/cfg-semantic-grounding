@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, TextIO
 
@@ -91,6 +92,7 @@ def _completed_instance_ids(
     agent_hash: str,
     attack_hash: str,
     allowed_ids: set[str],
+    completed_after_epoch: float | None = None,
 ) -> set[str]:
     completed: set[str] = set()
     for shard_dir in shard_dirs:
@@ -113,6 +115,10 @@ def _completed_instance_ids(
                 continue
             if str(row.get("attack_config_hash", "") or "") != attack_hash:
                 continue
+            if completed_after_epoch is not None:
+                row_epoch = _row_timestamp_epoch(row)
+                if row_epoch is None or row_epoch <= completed_after_epoch:
+                    continue
             patch_hash = str(row.get("patch_hash", "") or row.get("adv_patch_hash", "") or "")
             if patch_hash == EMPTY_PATCH_HASH:
                 continue
@@ -124,6 +130,18 @@ def _completed_instance_ids(
                         continue
             completed.add(instance_id)
     return completed
+
+
+def _row_timestamp_epoch(row: Dict[str, Any]) -> float | None:
+    for key in ("timestamp_end", "timestamp_start"):
+        value = str(row.get(key, "") or "").strip()
+        if not value:
+            continue
+        try:
+            return datetime.fromisoformat(value).timestamp()
+        except ValueError:
+            continue
+    return None
 
 
 def _finalized_instance_ids(
@@ -498,6 +516,7 @@ def main() -> int:
 
     existing_shard_dirs = _matching_existing_shard_dirs(shard_base, args.dataset, args.attack)
     completed_ids: set[str] = set()
+    partial_retry_completed_ids: set[str] = set()
     if args.retry_discarded:
         completed_ids = _finalized_instance_ids(
             final_out,
@@ -509,7 +528,21 @@ def main() -> int:
             attack_hash=current_hashes["attack"],
             allowed_ids=set(ids),
         )
-        if not _has_finalized_dataset(final_out):
+        finalized_dataset_path = final_out / "attack_dataset.jsonl"
+        if _has_finalized_dataset(final_out):
+            partial_retry_completed_ids = _completed_instance_ids(
+                existing_shard_dirs,
+                dataset=args.dataset,
+                agent=args.agent,
+                attack=args.attack,
+                dataset_hash=current_hashes["dataset"],
+                agent_hash=current_hashes["agent"],
+                attack_hash=current_hashes["attack"],
+                allowed_ids=set(ids),
+                completed_after_epoch=finalized_dataset_path.stat().st_mtime,
+            )
+            completed_ids.update(partial_retry_completed_ids)
+        else:
             completed_ids.update(
                 _completed_instance_ids(
                     existing_shard_dirs,
@@ -574,6 +607,7 @@ def main() -> int:
         "attack": args.attack,
         "instances": len(ids),
         "completed_instances_skipped": len(completed_ids),
+        "partial_retry_instances_skipped": len(partial_retry_completed_ids),
         "pending_instances": len(pending_ids),
         "global_resume_enabled": not args.no_global_resume,
         "retry_discarded": args.retry_discarded,

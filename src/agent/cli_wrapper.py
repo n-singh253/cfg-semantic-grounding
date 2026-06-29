@@ -428,6 +428,39 @@ def _extract_openhands_conversation_id(stdout: str, stderr: str = "") -> str:
     return match.group(1).strip()
 
 
+def _openhands_fatal_generation_error(stdout: str, stderr: str = "") -> str:
+    text = f"{stdout or ''}\n{stderr or ''}"
+    lowered = text.lower()
+    error_context_markers = (
+        "conversationerrorevent",
+        "litellm.",
+        "llm call failed",
+        "apierror",
+        "error code:",
+    )
+    if not any(marker in lowered for marker in error_context_markers):
+        return ""
+
+    fatal_patterns = [
+        ("insufficient credits", "provider_insufficient_credits"),
+        ('"code":402', "provider_payment_required"),
+        ("error code: 402", "provider_payment_required"),
+        ("authenticationerror", "provider_authentication_error"),
+        ("invalid api key", "provider_authentication_error"),
+        ("unauthorized", "provider_authentication_error"),
+        ('"code":401', "provider_authentication_error"),
+        ("error code: 401", "provider_authentication_error"),
+        ("permissiondenied", "provider_permission_denied"),
+        ("forbidden", "provider_permission_denied"),
+        ('"code":403', "provider_permission_denied"),
+        ("error code: 403", "provider_permission_denied"),
+    ]
+    for pattern, reason in fatal_patterns:
+        if pattern in lowered:
+            return reason
+    return ""
+
+
 def _openhands_resume_command(command: List[str], conversation_id: str, task: str) -> List[str]:
     """Return an OpenHands command that resumes a conversation with a new task."""
     if not command or not conversation_id:
@@ -658,10 +691,15 @@ def run_cli_agent(
         if not os.environ.get("GEMINI_API_KEY") and os.environ.get("GOOGLE_API_KEY"):
             env_override["GEMINI_API_KEY"] = os.environ["GOOGLE_API_KEY"]
     if executable == "openhands":
-        # Prefer the named agent config's model for provenance. A stale shell
-        # LLM_MODEL (for example qwen3-coder-flash) should not silently change
-        # what openhands_qwen3_coder_30b means.
-        llm_model = str(config.get("llm_model", "")).strip() or os.environ.get("LLM_MODEL")
+        prefer_env_llm_model = bool(config.get("prefer_env_llm_model", False))
+        configured_llm_model = str(config.get("llm_model", "")).strip()
+        env_llm_model = os.environ.get("LLM_MODEL")
+        if prefer_env_llm_model:
+            llm_model = env_llm_model or configured_llm_model
+        else:
+            # Prefer the named agent config's model for provenance unless the
+            # config explicitly opts into shell-level model overrides.
+            llm_model = configured_llm_model or env_llm_model
         llm_api_key = (
             os.environ.get("LLM_API_KEY")
             or os.environ.get("OPENROUTER_API_KEY")
@@ -776,12 +814,18 @@ def run_cli_agent(
             detected_conversation_id = _extract_openhands_conversation_id(result.stdout, result.stderr)
             if detected_conversation_id:
                 openhands_conversation_id = detected_conversation_id
+        generation_error = (
+            _openhands_fatal_generation_error(result.stdout, result.stderr)
+            if executable == "openhands"
+            else ""
+        )
 
         attempt_summaries.append(
             {
                 "attempt": attempt_idx + 1,
                 "returncode": result.returncode,
                 "empty_output": not bool(diff_text.strip()),
+                "generation_error": generation_error,
                 "openhands_resumed": should_resume_openhands,
                 "openhands_conversation_id": openhands_conversation_id,
                 "artifact_path": str(attempt_artifact_dir),
@@ -789,6 +833,24 @@ def run_cli_agent(
                 "stderr_log_path": log_paths.get("stderr_log_path", ""),
             }
         )
+        if generation_error:
+            error_path = attempt_artifact_dir / "generation_error.json"
+            atomic_write_json(
+                error_path,
+                {
+                    "agent": agent_name,
+                    "reason": generation_error,
+                    "returncode": result.returncode,
+                    "llm_model": env_override.get("LLM_MODEL", ""),
+                    "stdout_log_path": log_paths.get("stdout_log_path", ""),
+                    "stderr_log_path": log_paths.get("stderr_log_path", ""),
+                },
+            )
+            raise RuntimeError(
+                f"{agent_name}: OpenHands generation failed ({generation_error}) "
+                f"with model {env_override.get('LLM_MODEL', 'unknown')}. "
+                f"See {error_path}"
+            )
         if (
             diff_text.strip()
             or attempt_idx == max_attempts - 1
@@ -832,6 +894,27 @@ def run_cli_agent(
                     _reset_generated_git_checkout(cwd, base_commit)
                 return fallback_patch
             except Exception as exc:
+                fallback_generation_error = (
+                    _openhands_fatal_generation_error(str(exc))
+                    if executable == "openhands"
+                    else ""
+                )
+                if fallback_generation_error:
+                    error_path = artifact_dir / "direct_solution_fallback" / "generation_error.json"
+                    atomic_write_json(
+                        error_path,
+                        {
+                            "agent": agent_name,
+                            "reason": fallback_generation_error,
+                            "llm_model": env_override.get("LLM_MODEL", ""),
+                            "error": f"{type(exc).__name__}: {exc}",
+                        },
+                    )
+                    raise RuntimeError(
+                        f"{agent_name}: direct solution fallback failed ({fallback_generation_error}) "
+                        f"with model {env_override.get('LLM_MODEL', 'unknown')}. "
+                        f"See {error_path}"
+                    ) from exc
                 log_paths = {
                     **log_paths,
                     "direct_solution_fallback_error": f"{type(exc).__name__}: {exc}",

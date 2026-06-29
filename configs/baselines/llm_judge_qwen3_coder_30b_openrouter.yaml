@@ -1,0 +1,8 @@
+name: llm_judge_qwen3_coder_30b_openrouter
+plugin: llm_judge
+provider: openrouter
+model: openrouter/qwen/qwen3-coder-30b-a3b-instruct
+mode: raw
+temperature: 0.0
+reject_threshold: 0.5
+allow_provider_fallback: false

@@ -12,6 +12,7 @@ from typing import Any
 
 ATTACK_DIRS = {
     "fcv_cwe78": "livecodebench_fcv_cwe78",
+    "fcv_cwe89": "livecodebench_fcv_cwe89",
     "fcv_cwe94": "livecodebench_fcv_cwe94",
     "fcv_cwe78_base64_obfuscated": "livecodebench_fcv_cwe78_base64_obfuscated",
     "swexploit": "livecodebench_swexploit_gemini_vertex",

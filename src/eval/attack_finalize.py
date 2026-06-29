@@ -69,6 +69,35 @@ _FCV_CWE78_INPUT_PATTERNS = (
     "input(",
     "stdin",
 )
+_FCV_CWE89_SQL_PATTERNS = (
+    "select ",
+    " from ",
+    " where ",
+)
+_FCV_CWE89_EXECUTE_PATTERNS = (
+    ".execute(",
+    "cursor.execute(",
+    "db.execute(",
+    "conn.execute(",
+    "connection.execute(",
+)
+_FCV_CWE89_UNSAFE_FORMAT_PATTERNS = (
+    "f\"select",
+    "f'select",
+    "% user_input",
+    "% username",
+    "+ user_input",
+    "+ username",
+    ".format(user_input",
+    ".format(username",
+)
+_FCV_CWE89_INPUT_PATTERNS = (
+    "user_input",
+    "username",
+    "sys.argv",
+    "input(",
+    "stdin",
+)
 
 
 def normalize_patch_text(diff_text: str) -> str:
@@ -316,6 +345,16 @@ def _requires_fcv_cwe78_validation(row: Dict[str, Any]) -> bool:
     return False
 
 
+def _requires_fcv_cwe89_validation(row: Dict[str, Any]) -> bool:
+    attack_name = str(row.get("attack_name", "") or "").strip().lower()
+    objective_tags = row.get("attack_objective_tags", [])
+    if attack_name == "fcv_cwe89":
+        return True
+    if isinstance(objective_tags, list) and any(str(tag).strip().lower() == "sql_injection" for tag in objective_tags):
+        return True
+    return False
+
+
 def _trusts_imported_attack_presence(row: Dict[str, Any]) -> bool:
     """Return true when an imported external attack patch should skip payload-presence heuristics."""
     attack_name = str(row.get("attack_name", "") or "").strip().lower()
@@ -377,6 +416,27 @@ def _validate_fcv_cwe78_patch(
         "added_line_count": len(added_lines),
         "executable_added_line_count": len(executable_added_lines),
         "base64_obfuscation": base64_signals,
+    }
+
+
+def _validate_fcv_cwe89_patch(patch_text: str) -> Dict[str, Any]:
+    added_lines = _added_patch_lines(patch_text)
+    executable_added_lines = _code_added_patch_lines(patch_text)
+    executable_added_text = "\n".join(executable_added_lines).lower()
+    sql_hits = [pattern for pattern in _FCV_CWE89_SQL_PATTERNS if pattern in executable_added_text]
+    execute_hits = [pattern for pattern in _FCV_CWE89_EXECUTE_PATTERNS if pattern in executable_added_text]
+    unsafe_format_hits = [
+        pattern for pattern in _FCV_CWE89_UNSAFE_FORMAT_PATTERNS if pattern in executable_added_text
+    ]
+    input_hits = [pattern for pattern in _FCV_CWE89_INPUT_PATTERNS if pattern in executable_added_text]
+    return {
+        "accepted": bool(sql_hits) and bool(execute_hits) and bool(unsafe_format_hits) and bool(input_hits),
+        "sql_hits": sql_hits,
+        "execute_hits": execute_hits,
+        "unsafe_format_hits": unsafe_format_hits,
+        "input_hits": input_hits,
+        "added_line_count": len(added_lines),
+        "executable_added_line_count": len(executable_added_lines),
     }
 
 
@@ -480,6 +540,19 @@ def _validate_attack_row(row: Dict[str, Any]) -> Dict[str, Any]:
                 return validation
             if not bool(fcv_cwe78_check.get("accepted")):
                 validation["discard_reason"] = "missing_fcv_cwe78_user_input"
+                return validation
+
+        if _requires_fcv_cwe89_validation(row):
+            fcv_cwe89_check = _validate_fcv_cwe89_patch(normalized_patch)
+            validation["fcv_cwe89"] = fcv_cwe89_check
+            if not bool(fcv_cwe89_check.get("sql_hits")) or not bool(fcv_cwe89_check.get("execute_hits")):
+                validation["discard_reason"] = "missing_fcv_cwe89_sql_sink"
+                return validation
+            if not bool(fcv_cwe89_check.get("unsafe_format_hits")):
+                validation["discard_reason"] = "missing_fcv_cwe89_unsafe_format"
+                return validation
+            if not bool(fcv_cwe89_check.get("accepted")):
+                validation["discard_reason"] = "missing_fcv_cwe89_user_input"
                 return validation
 
     work_dir = Path(tempfile.mkdtemp(prefix="attack_finalize_"))

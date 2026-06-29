@@ -199,6 +199,8 @@ def attack_label(rows: list[dict[str, Any]], run_dir: Path) -> str:
         return "SWExploit"
     if "fcv_cwe78" in haystack or "fcv78" in haystack:
         return "FCV-78"
+    if "fcv_cwe89" in haystack or "fcv89" in haystack:
+        return "FCV-89"
     if "fcv_cwe94" in haystack or "fcv94" in haystack:
         return "FCV-94"
     if "fcv" in haystack:
