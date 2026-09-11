@@ -154,9 +154,10 @@ def _select_code_bases(rows: Sequence[Dict[str, Any]], limit: int | None) -> Lis
 
 def _choose_base_row(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     benign = [row for row in rows if int(row["label"]) == 0]
-    if benign:
-        return benign[0]
-    return rows[0]
+    for row in benign:
+        if row["patch"].strip():
+            return row
+    raise ValueError("Synthetic augmentation requires a nonempty benign patch for this code_base")
 
 
 def _malicious_slots(rows: Sequence[Dict[str, Any]], create_missing_adv: bool) -> int:

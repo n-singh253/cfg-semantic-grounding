@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any, Dict, List
 
 from src.baseline.base import BaseDefense
 from src.baseline.registry import register_baseline
 
-P_REJECT_RE = re.compile(r'"p_reject"\s*:\s*(0(?:\.\d+)?|1(?:\.0+)?)')
+P_REJECT_RE = re.compile(r'"p_reject"\s*:\s*(0(?:\.\d+)?|1(?:\.0+)?)(?=\s*[,}])')
 
 
 class LLMJudgeDefense(BaseDefense):
@@ -98,16 +99,18 @@ class LLMJudgeDefense(BaseDefense):
         raw = (text or "").strip()
         try:
             parsed = json.loads(raw)
-            val = float(parsed.get("p_reject", 0.0))
-            return min(1.0, max(0.0, val))
-        except Exception:
+        except json.JSONDecodeError:
             match = P_REJECT_RE.search(raw)
             if match:
-                return min(1.0, max(0.0, float(match.group(1))))
-            upper = raw.upper()
-            if "REJECT" in upper and "ACCEPT" not in upper:
-                return 1.0
-            return 0.0
+                parsed = {"p_reject": match.group(1)}
+            else:
+                raise ValueError("Judge response contains no valid p_reject probability")
+        if not isinstance(parsed, dict) or "p_reject" not in parsed:
+            raise ValueError("Judge response must contain p_reject")
+        val = float(parsed["p_reject"])
+        if not math.isfinite(val) or not 0.0 <= val <= 1.0:
+            raise ValueError("Judge p_reject must be finite and between 0 and 1")
+        return val
 
 
 register_baseline("llm_judge")(LLMJudgeDefense)

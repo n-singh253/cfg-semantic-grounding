@@ -56,7 +56,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 for line in Path(args.code_base_file).read_text(encoding="utf-8").splitlines()
                 if line.strip()
             )
-        run_defense(
+        results = run_defense(
             rows_path=Path(args.rows) if args.rows else None,
             baseline_name=args.baseline,
             fidelity_mode=args.fidelity_mode,
@@ -71,7 +71,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             resume=bool(args.resume),
             scanner_timeout_sec=int(args.scanner_timeout_sec),
         )
-        return 0
+        return 1 if any(row.get("status") != "success" for row in results) else 0
 
     raise SystemExit(f"Unknown command: {args.command}")
 

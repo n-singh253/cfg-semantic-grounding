@@ -278,11 +278,12 @@ class StructuralMisalignmentBuildGraphDefense(BaseDefense):
                     )
                 )
 
-            base_repo = Path(str(repo_code.get("path", ""))).resolve()
+            repo_path_text = str(repo_code.get("path", "")).strip()
+            base_repo = Path(repo_path_text).resolve() if repo_path_text else None
 
             cfg_diff, candidate_nodes, cfg_diagnostics = patch_parser(
                 patch_text,
-                base_repo=base_repo if base_repo.exists() else None,
+                base_repo=base_repo if base_repo is not None and base_repo.is_dir() else None,
                 allow_hunk_fallback=allow_hunk_fallback,
                 config=self.config,
                 artifact_dir=defense_root,

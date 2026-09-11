@@ -8,7 +8,7 @@ seed: 42
 min_candidate_nodes: 1
 
 inputs:
-  data_rows: /proj/arise/arise/hj2742/cfg-semantic-grounding/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl
-  synthetic_rows: /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/synthetic/fcv_lcb_openhands_qwen3_openai_smoke/rows_synthetic.jsonl
-  data_graph_dir: /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/graphs/real_fcv_lcb_openhands_qwen3_openai_smoke
-  synthetic_graph_dir: /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/graphs/synthetic_fcv_lcb_openhands_qwen3_openai_smoke
+  data_rows: ../../data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl
+  synthetic_rows: ../../RES/synthetic/fcv_livecodebench_openhands_qwen3_openai/rows_synthetic.jsonl
+  data_graph_dir: ../../RES/graphs/real_fcv_livecodebench_openhands_qwen3_openai
+  synthetic_graph_dir: ../../RES/graphs/synthetic_fcv_livecodebench_openhands_qwen3_openai

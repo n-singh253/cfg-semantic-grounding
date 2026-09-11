@@ -147,8 +147,8 @@ def train_graph_model(
     loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
     history: List[Dict[str, Any]] = []
-    best_score = -1.0
-    best_state = None
+    if epochs < 1:
+        raise ValueError("epochs must be positive")
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_loss = 0.0
@@ -164,27 +164,17 @@ def train_graph_model(
             batch_count += 1
 
         train_metrics = evaluate_model(model, train_graphs, batch_size=batch_size)
-        test_metrics = evaluate_model(model, test_graphs, batch_size=batch_size)
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": epoch_loss / max(1, batch_count),
                 "train_metrics": train_metrics,
-                "test_metrics": test_metrics,
             }
         )
-        monitored = test_metrics.get("roc_auc")
-        score = float(monitored) if monitored is not None else float(test_metrics.get("accuracy", 0.0))
-        if score >= best_score:
-            best_score = score
-            best_state = {key: value.detach().cpu() for key, value in model.state_dict().items()}
-
-    if best_state is None:
-        raise RuntimeError("Training completed without producing a model state.")
-
+    # Use the prespecified final epoch. Test labels must never select a checkpoint.
+    final_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
     checkpoint_path = output_dir / "model.pt"
-    torch.save(best_state, checkpoint_path)
-    model.load_state_dict(best_state)
+    torch.save(final_state, checkpoint_path)
     final_metrics = evaluate_model(model, test_graphs, batch_size=batch_size)
     metadata = {
         "gnn_model_type": "hetero_sage",
@@ -192,6 +182,7 @@ def train_graph_model(
         "hidden_dim": hidden_dim,
         "dropout": dropout,
         "epochs": epochs,
+        "checkpoint_selection": "fixed_final_epoch",
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "seed": seed,

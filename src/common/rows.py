@@ -150,6 +150,8 @@ def load_rows(
     code_bases: Sequence[str] | None = None,
 ) -> List[Dict[str, Any]]:
     wanted = {item.strip() for item in (code_bases or []) if item.strip()}
+    if limit is not None and limit <= 0:
+        return []
     rows: List[Dict[str, Any]] = []
     for file_path in discover_rows_files(path, recursive=recursive):
         with file_path.open("r", encoding="utf-8") as handle:
@@ -263,8 +265,8 @@ def repo_path_candidates(code_base: str, repos_root: Path) -> List[Path]:
         root / "lite" / code_base,
         root / "test" / code_base,
     ]
-    candidates.extend(root / rel for rel in _swebench_repo_slug_candidates(code_base))
-    candidates.extend(root / rel for rel in _featurebench_repo_slug_candidates(code_base))
+    # A shared upstream clone has no per-instance base-commit guarantee. Only
+    # materialized instance repositories are valid for these four-field rows.
 
     deduped: List[Path] = []
     seen: set[str] = set()

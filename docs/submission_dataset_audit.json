@@ -1,0 +1,661 @@
+{
+  "dataset": "EbonLoa2/cfg-semantic-grounding",
+  "revision": "eb781a02a33e39dfd83199d49d662f09ddfb0c1d",
+  "summary": {
+    "file_count": 41,
+    "row_count": 32616,
+    "empty_patch_count": 415,
+    "files_with_empty_patches": 16,
+    "malicious_only_groups": 1479,
+    "benign_only_groups": 3203
+  },
+  "files": [
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-502_LiveCodeBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 2038,
+      "labels": {
+        "0": 1042,
+        "1": 996
+      },
+      "code_bases": 1051,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 55,
+      "malicious_only_groups": 9,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-78_FeatureBench_Claude-Sonnet-4.6/rows.jsonl",
+      "rows": 186,
+      "labels": {
+        "0": 115,
+        "1": 71
+      },
+      "code_bases": 122,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 51,
+      "malicious_only_groups": 7,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-78_FeatureBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 151,
+      "labels": {
+        "0": 116,
+        "1": 35
+      },
+      "code_bases": 123,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 88,
+      "malicious_only_groups": 7,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-78_LiveCodeBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 1935,
+      "labels": {
+        "0": 1042,
+        "1": 893
+      },
+      "code_bases": 1052,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 159,
+      "malicious_only_groups": 10,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-78_LiveCodeBench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 1393,
+      "labels": {
+        "0": 605,
+        "1": 788
+      },
+      "code_bases": 823,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 35,
+      "malicious_only_groups": 218,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-78_SWE-Bench_Claude-Sonnet-4.6/rows.jsonl",
+      "rows": 70,
+      "labels": {
+        "0": 56,
+        "1": 14
+      },
+      "code_bases": 65,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 51,
+      "malicious_only_groups": 9,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-78_SWE-Bench_MINI-Gemini-3/rows.jsonl",
+      "rows": 178,
+      "labels": {
+        "0": 136,
+        "1": 42
+      },
+      "code_bases": 154,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 112,
+      "malicious_only_groups": 18,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-89_LiveCodeBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 2064,
+      "labels": {
+        "0": 1042,
+        "1": 1022
+      },
+      "code_bases": 1051,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 29,
+      "malicious_only_groups": 9,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-94_LiveCodeBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 2091,
+      "labels": {
+        "0": 1042,
+        "1": 1049
+      },
+      "code_bases": 1055,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 6,
+      "malicious_only_groups": 13,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-94_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 506,
+      "labels": {
+        "0": 210,
+        "1": 296
+      },
+      "code_bases": 442,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 146,
+      "malicious_only_groups": 232,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV-94_LiveCodeBench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 1190,
+      "labels": {
+        "0": 605,
+        "1": 585
+      },
+      "code_bases": 612,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 27,
+      "malicious_only_groups": 7,
+      "identical_patch_pairs": 7,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV_FeatureBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 86,
+      "labels": {
+        "0": 43,
+        "1": 43
+      },
+      "code_bases": 43,
+      "empty_patches_by_label": {
+        "0": 9
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 1892,
+      "labels": {
+        "0": 946,
+        "1": 946
+      },
+      "code_bases": 946,
+      "empty_patches_by_label": {
+        "0": 29
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/FCV_SWE-Bench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 198,
+      "labels": {
+        "0": 99,
+        "1": 99
+      },
+      "code_bases": 99,
+      "empty_patches_by_label": {
+        "0": 16
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_FeatureBench_Claude-Sonnet-4.6/rows.jsonl",
+      "rows": 233,
+      "labels": {
+        "0": 115,
+        "1": 118
+      },
+      "code_bases": 142,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 24,
+      "malicious_only_groups": 27,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_FeatureBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 263,
+      "labels": {
+        "0": 116,
+        "1": 147
+      },
+      "code_bases": 179,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 32,
+      "malicious_only_groups": 63,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_FeatureBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 94,
+      "labels": {
+        "0": 47,
+        "1": 47
+      },
+      "code_bases": 47,
+      "empty_patches_by_label": {
+        "0": 11
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_LiveCodeBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 2080,
+      "labels": {
+        "0": 1042,
+        "1": 1038
+      },
+      "code_bases": 1054,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 16,
+      "malicious_only_groups": 12,
+      "identical_patch_pairs": 2,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 1960,
+      "labels": {
+        "0": 980,
+        "1": 980
+      },
+      "code_bases": 980,
+      "empty_patches_by_label": {
+        "0": 5
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_LiveCodeBench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 1621,
+      "labels": {
+        "0": 605,
+        "1": 1016
+      },
+      "code_bases": 1053,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 37,
+      "malicious_only_groups": 448,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_SWE-Bench_Claude-Sonnet-4.6/rows.jsonl",
+      "rows": 105,
+      "labels": {
+        "0": 56,
+        "1": 49
+      },
+      "code_bases": 84,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 35,
+      "malicious_only_groups": 28,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_SWE-Bench_MINI-Gemini-3/rows.jsonl",
+      "rows": 316,
+      "labels": {
+        "0": 136,
+        "1": 180
+      },
+      "code_bases": 231,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 51,
+      "malicious_only_groups": 95,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Non-Obfuscated/SWExploit_SWE-Bench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 244,
+      "labels": {
+        "0": 122,
+        "1": 122
+      },
+      "code_bases": 122,
+      "empty_patches_by_label": {
+        "0": 9
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV-78_FeatureBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 196,
+      "labels": {
+        "0": 98,
+        "1": 98
+      },
+      "code_bases": 98,
+      "empty_patches_by_label": {
+        "0": 98
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV-78_FeatureBench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 92,
+      "labels": {
+        "0": 46,
+        "1": 46
+      },
+      "code_bases": 46,
+      "empty_patches_by_label": {
+        "0": 46
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV-78_LiveCodeBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 2005,
+      "labels": {
+        "0": 1042,
+        "1": 963
+      },
+      "code_bases": 1049,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 86,
+      "malicious_only_groups": 7,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV-78_LiveCodeBench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 1338,
+      "labels": {
+        "0": 605,
+        "1": 733
+      },
+      "code_bases": 832,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 99,
+      "malicious_only_groups": 227,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV-78_SWE-Bench_MINI-Gemini-3/rows.jsonl",
+      "rows": 474,
+      "labels": {
+        "0": 300,
+        "1": 174
+      },
+      "code_bases": 300,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 126,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV-78_SWE-Bench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 346,
+      "labels": {
+        "0": 300,
+        "1": 46
+      },
+      "code_bases": 300,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 254,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV_FeatureBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 112,
+      "labels": {
+        "0": 56,
+        "1": 56
+      },
+      "code_bases": 56,
+      "empty_patches_by_label": {
+        "0": 8
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 2012,
+      "labels": {
+        "0": 1006,
+        "1": 1006
+      },
+      "code_bases": 1006,
+      "empty_patches_by_label": {
+        "0": 5
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/FCV_SWE-Bench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 22,
+      "labels": {
+        "0": 11,
+        "1": 11
+      },
+      "code_bases": 11,
+      "empty_patches_by_label": {
+        "0": 9
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_FeatureBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 128,
+      "labels": {
+        "0": 64,
+        "1": 64
+      },
+      "code_bases": 64,
+      "empty_patches_by_label": {
+        "0": 64
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_FeatureBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 142,
+      "labels": {
+        "0": 71,
+        "1": 71
+      },
+      "code_bases": 71,
+      "empty_patches_by_label": {
+        "0": 18
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_FeatureBench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 74,
+      "labels": {
+        "0": 37,
+        "1": 37
+      },
+      "code_bases": 37,
+      "empty_patches_by_label": {
+        "0": 37
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_LiveCodeBench_MINI-Gemini-3/rows.jsonl",
+      "rows": 1346,
+      "labels": {
+        "0": 1042,
+        "1": 304
+      },
+      "code_bases": 1043,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 739,
+      "malicious_only_groups": 1,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 1910,
+      "labels": {
+        "0": 955,
+        "1": 955
+      },
+      "code_bases": 955,
+      "empty_patches_by_label": {
+        "0": 46
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_LiveCodeBench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 732,
+      "labels": {
+        "0": 605,
+        "1": 127
+      },
+      "code_bases": 637,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 510,
+      "malicious_only_groups": 32,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_SWE-Bench_MINI-Gemini-3/rows.jsonl",
+      "rows": 424,
+      "labels": {
+        "0": 300,
+        "1": 124
+      },
+      "code_bases": 300,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 176,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_SWE-Bench_OpenHands-Qwen3-Coder-30B/rows.jsonl",
+      "rows": 28,
+      "labels": {
+        "0": 14,
+        "1": 14
+      },
+      "code_bases": 14,
+      "empty_patches_by_label": {
+        "0": 5
+      },
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 0,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    },
+    {
+      "file": "synthesized_results/Obfuscated/SWExploit_SWE-Bench_SWEAgent-Claude-3.7/rows.jsonl",
+      "rows": 341,
+      "labels": {
+        "0": 300,
+        "1": 41
+      },
+      "code_bases": 300,
+      "empty_patches_by_label": {},
+      "nonempty_non_diff": 0,
+      "benign_only_groups": 259,
+      "malicious_only_groups": 0,
+      "identical_patch_pairs": 0,
+      "conflicting_labels_for_identical_input": 0
+    }
+  ]
+}

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Sequence, Tuple
 
@@ -22,12 +22,15 @@ from src.common.hashing import sha256_text
 from src.common.rows import (
     infer_benchmark,
     load_rows,
-    reset_git_repo,
     resolve_repo_path,
     copy_repo_without_git,
+    write_jsonl,
 )
 from src.common.llm import LLMClient
 from src.common.subprocess import command_exists, run_command
+
+
+_WORKER_BASELINE = threading.local()
 
 
 def _safe_filename(value: str) -> str:
@@ -49,7 +52,7 @@ def _artifact_instance_id(code_base: str, row_index: int, label: int) -> str:
     return f"{_safe_filename(code_base)}__{_prompt_type(label)}__row_{row_index:06d}"
 
 
-def _row_key(row: Dict[str, Any], row_index: int, baseline_hash: str) -> str:
+def _row_key(row: Dict[str, Any], row_index: int, baseline_hash: str, execution_hash: str = "") -> str:
     return sha256_text(
         json.dumps(
             {
@@ -59,6 +62,7 @@ def _row_key(row: Dict[str, Any], row_index: int, baseline_hash: str) -> str:
                 "prompt_hash": sha256_text(row["prompt"]),
                 "patch_hash": sha256_text(row["patch"]),
                 "baseline_config_hash": baseline_hash,
+                "execution_hash": execution_hash,
             },
             sort_keys=True,
         )
@@ -78,7 +82,7 @@ def _load_completed_keys(results_path: Path, baseline_hash: str) -> set[str]:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if row.get("baseline_config_hash") == baseline_hash and row.get("row_key"):
+            if row.get("baseline_config_hash") == baseline_hash and row.get("row_key") and row.get("status") == "success":
                 keys.add(str(row["row_key"]))
     return keys
 
@@ -141,6 +145,8 @@ def _write_patch_snippet_repo(root: Path, patch_text: str) -> Dict[str, Any]:
         files = {"candidate.py": patch_text.rstrip() + "\n"}
     for rel, content in files.items():
         path = root / rel
+        if not path.resolve().is_relative_to(root.resolve()):
+            raise ValueError(f"Patch path escapes scan workspace: {rel}")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     return {
@@ -224,7 +230,9 @@ def _parse_static_report(report_path: Path, tool: str) -> Tuple[int, int, str, A
         payload = json.loads(report_path.read_text(encoding="utf-8"))
     except Exception as exc:
         return 0, 0, f"{type(exc).__name__}: {exc}", None
-    results = payload.get("results", [])
+    if not isinstance(payload, dict):
+        return 0, 0, f"{tool}_report_not_object", payload
+    results = payload.get("results")
     errors = payload.get("errors", [])
     findings = len(results) if isinstance(results, list) else 0
     error_count = len(errors) if isinstance(errors, list) else 0
@@ -265,32 +273,21 @@ def _prepare_static_workspace(
     work_root: Path,
 ) -> Dict[str, Any]:
     patch_text = row["patch"]
+    if not patch_text.strip():
+        raise ValueError("empty_patch: a scanner cannot evaluate a missing candidate")
+    if repo_path is not None and not repo_path.is_dir():
+        raise FileNotFoundError(f"Benchmark repository missing: {repo_path}")
     if repo_path and repo_path.exists() and repo_path.is_dir() and looks_like_unified_diff(patch_text):
-        reset_before = reset_git_repo(repo_path)
         copy_repo_without_git(repo_path, work_root)
         apply_details = apply_unified_diff_detailed(work_root, patch_text)
-        reset_after = reset_git_repo(repo_path)
         if bool(apply_details.get("applied")):
             return {
                 "scan_root": work_root,
                 "input_mode": "isolated_repo_after_patch",
                 "repo_path": str(repo_path),
-                "source_reset_before": reset_before,
-                "source_reset_after": reset_after,
                 "patch_apply": apply_details,
             }
-        shutil.rmtree(work_root, ignore_errors=True)
-        work_root.mkdir(parents=True, exist_ok=True)
-        snippet_details = _write_patch_snippet_repo(work_root, patch_text)
-        return {
-            "scan_root": work_root,
-            "input_mode": "patch_snippets_after_apply_failure",
-            "repo_path": str(repo_path),
-            "source_reset_before": reset_before,
-            "source_reset_after": reset_after,
-            "patch_apply": apply_details,
-            "snippet_materialization": snippet_details,
-        }
+        raise ValueError(f"Patch does not apply to {repo_path}: {apply_details.get('reason_code')}")
 
     work_root.mkdir(parents=True, exist_ok=True)
     snippet_details = _write_patch_snippet_repo(work_root, patch_text)
@@ -314,26 +311,42 @@ def _run_static_scanner(
 ) -> Tuple[str, Dict[str, Any]]:
     base_command = [str(part) for part in config.get("command", [tool, "-r", ".", "-f", "json"])]
     if not base_command:
-        return "reject", {"tool": tool, "failure_reason": "empty_command"}
+        return "error", {"tool": tool, "error": "empty_command"}
 
     available, availability_signals = _static_tool_available(base_command[0])
     if not available:
-        behavior = str(config.get("missing_tool_behavior", "reject")).strip().lower()
-        decision = "accept" if behavior == "accept" else "reject"
-        availability_signals.update({"tool": tool, "behavior": behavior})
-        return decision, {
+        return "error", {
             **availability_signals,
+            "tool": tool,
+            "error": availability_signals["failure_reason"],
         }
 
     artifact_dir = out_dir / "artifacts" / "static" / f"{_safe_filename(row['code_base'])}_{row_index:06d}"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     report_path = artifact_dir / f"{tool}.json"
+    report_path.unlink(missing_ok=True)
     max_findings = int(config.get("max_findings", config.get("max_new_findings", 0)))
+    baseline_findings = 0
+    baseline_payload = None
 
     with tempfile.TemporaryDirectory(prefix=f"{tool}-row-defense-") as tmp:
         work_root = Path(tmp) / "repo"
         prep = _prepare_static_workspace(row=row, repo_path=repo_path, work_root=work_root)
         scan_root = Path(prep["scan_root"])
+        if "max_new_findings" in config and "max_findings" not in config and prep["input_mode"] == "isolated_repo_after_patch":
+            before_root = Path(tmp) / "before"
+            copy_repo_without_git(repo_path, before_root)
+            before_report = artifact_dir / f"{tool}_before.json"
+            before_report.unlink(missing_ok=True)
+            before_command = (
+                _build_bandit_command(base_command, before_report)
+                if tool == "bandit"
+                else _build_semgrep_command(base_command, before_report)
+            )
+            before_result = run_command(before_command, cwd=before_root, timeout_sec=timeout_sec)
+            baseline_findings, before_errors, before_parse_error, baseline_payload = _parse_static_report(before_report, tool)
+            if before_result.returncode not in {0, 1} or before_errors or before_parse_error:
+                raise RuntimeError(f"{tool} baseline scan failed: {before_parse_error or before_errors or before_result.returncode}")
         command = (
             _build_bandit_command(base_command, report_path)
             if tool == "bandit"
@@ -341,12 +354,19 @@ def _run_static_scanner(
         )
         result = run_command(command, cwd=scan_root, timeout_sec=timeout_sec)
         findings, errors_count, parse_error, parsed = _parse_static_report(report_path, tool)
+        total_findings = findings
+        if baseline_payload is not None and not parse_error:
+            findings = sum((_finding_counts(parsed) - _finding_counts(baseline_payload)).values())
 
     # Keep a copy of the scanner output outside the temporary workspace.
     if parsed is not None:
         atomic_write_json(artifact_dir / f"{tool}_parsed.json", parsed if isinstance(parsed, dict) else {"payload": parsed})
 
-    decision = "reject" if parse_error or findings > max_findings else "accept"
+    allowed_returncodes = {0, 1}  # Both scanners may exit 1 when findings exist.
+    error = parse_error or (f"{tool}_scan_errors:{errors_count}" if errors_count else "")
+    if result.returncode not in allowed_returncodes:
+        error = error or f"{tool}_exit_{result.returncode}"
+    decision = "error" if error else ("reject" if findings > max_findings else "accept")
     signals = {
         "tool": tool,
         **availability_signals,
@@ -354,11 +374,14 @@ def _run_static_scanner(
         "returncode": result.returncode,
         "timeout_sec": timeout_sec,
         "findings": findings,
+        "total_findings": total_findings,
+        "baseline_findings": baseline_findings,
         "errors_count": errors_count,
         "parse_error": parse_error,
         "max_findings": max_findings,
-        "decision_rule": "reject_if_findings_gt_max_findings_or_report_unparseable",
-        "failure_reason": parse_error,
+        "decision_rule": "error_if_scan_incomplete_else_reject_if_findings_gt_threshold",
+        "failure_reason": error,
+        "error": error,
         "stdout_preview": (result.stdout or "")[:1000],
         "stderr_preview": (result.stderr or "")[:1000],
         "artifact_dir": str(artifact_dir),
@@ -370,6 +393,20 @@ def _run_static_scanner(
         },
     }
     return decision, signals
+
+
+def _finding_counts(payload: Dict[str, Any]) -> Counter:
+    """Compare findings without treating line shifts as newly introduced issues."""
+    def identity(finding):
+        extra = finding.get("extra", {})
+        code = finding.get("code", extra.get("lines", ""))
+        code = "\n".join(re.sub(r"^\s*\d+\s+", "", line).strip() for line in code.splitlines())
+        return (
+            str(finding.get("filename", finding.get("path", ""))).removeprefix("./"),
+            finding.get("test_id", finding.get("check_id", "")),
+            code,
+        )
+    return Counter(identity(finding) for finding in payload.get("results", []))
 
 
 def _decision_from_defense_result(decision_raw: Any, signals: Dict[str, Any]) -> str:
@@ -396,14 +433,17 @@ def _evaluate_plugin_row(
     out_dir: Path,
     repo_path: Path | None,
 ) -> Tuple[str, Dict[str, Any]]:
-    llm_client = LLMClient(out_dir / "artifacts" / "llm_cache")
-    baseline_obj = get_baseline(baseline_plugin)(
-        baseline_config,
-        llm_client,
-        baseline_hash,
-        out_dir,
-        fidelity_mode,
-    )
+    # Local transformer guards load model weights in __init__. Reuse one instance
+    # per worker, while keeping mutable last_signals isolated between threads.
+    cache_key = (baseline_plugin, baseline_hash, str(out_dir), fidelity_mode)
+    if getattr(_WORKER_BASELINE, "key", None) != cache_key:
+        llm_client = LLMClient(out_dir / "artifacts" / "llm_cache")
+        _WORKER_BASELINE.instance = get_baseline(baseline_plugin)(
+            baseline_config, llm_client, baseline_hash, out_dir, fidelity_mode,
+        )
+        _WORKER_BASELINE.key = cache_key
+    baseline_obj = _WORKER_BASELINE.instance
+    baseline_obj.last_signals = {}
     code_base = row["code_base"]
     label = int(row["label"])
     artifact_instance_id = _artifact_instance_id(code_base, row_index, label)
@@ -541,26 +581,10 @@ def _run_dataset_baseline(
     resume: bool,
 ) -> List[Dict[str, Any]]:
     results_path = out_dir / "results.jsonl"
-    if not resume and results_path.exists():
-        results_path.unlink()
+    results_path.unlink(missing_ok=True)
 
-    existing = [
-        row
-        for row in _read_results_jsonl(results_path)
-        if row.get("baseline_config_hash") == baseline_hash
-    ]
-    if resume and existing:
-        print(
-            f"[run_defense] start baseline={baseline_name} plugin={baseline_plugin} "
-            f"scope=dataset pending=0 resumed={len(existing)}",
-            flush=True,
-        )
-        print(
-            f"[run_defense] complete baseline={baseline_name} "
-            f"new=0 resumed={len(existing)}",
-            flush=True,
-        )
-        return existing
+    # Training inputs and graph artifacts can change in place with the same YAML.
+    # Recompute dataset-level evaluations instead of reusing unverified metrics.
 
     print(
         f"[run_defense] start baseline={baseline_name} plugin={baseline_plugin} "
@@ -649,12 +673,27 @@ def run_defense(
     if not resume and results_path.exists():
         results_path.unlink()
     completed = _load_completed_keys(results_path, baseline_hash) if resume else set()
+    execution_hash = config_hash({
+        "fidelity_mode": fidelity_mode,
+        "repos_root": str(repos_root or ""),
+        "scanner_timeout_sec": scanner_timeout_sec,
+    })
 
     indexed_rows = [
-        (idx, row, _row_key(row, idx, baseline_hash))
+        (idx, row, _row_key(row, idx, baseline_hash, execution_hash))
         for idx, row in enumerate(rows)
     ]
     pending = [(idx, row, key) for idx, row, key in indexed_rows if key not in completed]
+    current_keys = {key for _, _, key in indexed_rows}
+    retained = {
+        result["row_key"]: result
+        for result in _read_results_jsonl(results_path)
+        if result.get("row_key") in current_keys and result.get("status") == "success"
+    }
+    # Keep one successful result per current row; retries replace failed records.
+    retained_path = results_path.with_suffix(".resume.tmp")
+    write_jsonl(retained_path, retained.values())
+    retained_path.replace(results_path)
     print(
         f"[run_defense] start rows={len(rows)} pending={len(pending)} "
         f"baseline={baseline_name} plugin={baseline_plugin} workers={workers}",
@@ -669,6 +708,7 @@ def run_defense(
         "baseline_config_hash": baseline_hash,
         "baseline_config": baseline_config,
         "fidelity_mode": fidelity_mode,
+        "execution_hash": execution_hash,
         "repos_root": str(repos_root or ""),
         "workers": workers,
     }

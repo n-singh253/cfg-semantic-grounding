@@ -80,7 +80,13 @@ def _row_identity(row: Dict[str, Any], row_index: int) -> Dict[str, Any]:
         "row_index": row_index,
         "code_base": row["code_base"],
         "label": int(row["label"]),
+        "prompt_hash": sha256_text(row["prompt"]),
+        "patch_hash": sha256_text(row["patch"]),
     }
+
+
+def _identity_key(row: Dict[str, Any]) -> tuple:
+    return tuple(row.get(key) for key in ("code_base", "label", "prompt_hash", "patch_hash"))
 
 
 def _load_graph_examples(
@@ -91,8 +97,8 @@ def _load_graph_examples(
     min_candidate_nodes: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     input_rows = load_rows(rows_path)
-    input_by_index = {
-        idx: _row_identity(row, idx)
+    input_by_identity = {
+        _identity_key(_row_identity(row, idx)): _row_identity(row, idx)
         for idx, row in enumerate(input_rows)
     }
 
@@ -102,16 +108,21 @@ def _load_graph_examples(
 
     examples: List[Dict[str, Any]] = []
     dropped: Counter[str] = Counter()
+    seen: set[tuple] = set()
+    graph_configs: set[str] = set()
     result_rows = _read_jsonl(result_path)
     for result in result_rows:
         if str(result.get("status", "")) != "success":
             dropped["result_not_success"] += 1
             continue
 
-        row_index = int(result.get("row_index", -1))
-        row_info = input_by_index.get(row_index)
+        identity = _identity_key(result)
+        row_info = input_by_identity.get(identity)
         if row_info is None:
-            dropped["row_index_not_in_input"] += 1
+            dropped["row_identity_not_in_input"] += 1
+            continue
+        if identity in seen:
+            dropped["duplicate_result"] += 1
             continue
 
         signals = result.get("defense_signals", {})
@@ -135,6 +146,10 @@ def _load_graph_examples(
             training = _artifact_payload(training_path)
         except Exception:
             dropped["unreadable_training_example"] += 1
+            continue
+
+        if _identity_key(training) != identity:
+            dropped["training_identity_mismatch"] += 1
             continue
 
         stage_completed = training.get("stage_completed", {})
@@ -177,10 +192,12 @@ def _load_graph_examples(
             dropped["label_mismatch"] += 1
             continue
 
+        seen.add(identity)
+        graph_configs.add(str(result.get("baseline_config_hash", "")))
         examples.append(
             {
                 "source": source_name,
-                "row_index": row_index,
+                "row_index": row_info["row_index"],
                 "artifact_instance_id": result.get("artifact_instance_id", ""),
                 "code_base": row_info["code_base"],
                 "label": label,
@@ -196,6 +213,8 @@ def _load_graph_examples(
             }
         )
 
+    if len(graph_configs) > 1:
+        raise ValueError(f"Mixed graph-build configurations in {result_path}; rebuild into a clean output directory.")
     report = {
         "source": source_name,
         "rows_path": str(rows_path),
@@ -363,7 +382,7 @@ def _run_feature_eval(
     seed: int,
     out_dir: Path,
 ) -> List[Dict[str, Any]]:
-    columns = feature_columns([*train, *test])
+    columns = feature_columns(train)
     atomic_write_json(
         out_dir / "artifacts" / "feature_columns.json",
         {"feature_columns": columns, "feature_column_count": len(columns)},
