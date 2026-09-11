@@ -29,24 +29,9 @@ def write_config_snapshot(path: Path, data: Dict[str, Any]) -> None:
     atomic_write_text(path, json.dumps(data, indent=2, sort_keys=True))
 
 
-def dataset_config_filename(dataset_name: str) -> str:
-    mapping = {
-        "swebench": "swebench.yaml",
-        "toy": "toy.yaml",
-        "swebench_lite": "lite.yaml",
-        "swebench_pro": "pro.yaml",
-        "swebench_plus": "plus.yaml",
-        "livecodebench": "livecodebench.yaml",
-    }
-    return mapping.get(dataset_name, f"{dataset_name}.yaml")
-
-
 def load_component_config(config_dir: Path, component: str, name: str) -> Dict[str, Any]:
     """Load component YAML from configs/<component>/<name>.yaml style layout."""
-    if component == "datasets":
-        candidate = config_dir / component / dataset_config_filename(name)
-    else:
-        candidate = config_dir / component / f"{name}.yaml"
+    candidate = config_dir / component / f"{name}.yaml"
     if not candidate.exists():
         raise FileNotFoundError(f"Missing config file for {component}:{name} at {candidate}")
     return load_yaml(candidate)

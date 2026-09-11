@@ -1,20 +1,22 @@
-"""Extract-only structural misalignment plugin.
+"""Build structural misalignment graph and feature artifacts.
 
-This plugin is for offline training-data generation, not final defense inference.
+This plugin is for offline graph/feature generation, not final defense inference.
 
 Execution model:
-1. Receive one prompt + one patch from run_defense.
+1. Receive one prompt + one patch row from defense evaluation.
 2. Extract changed code nodes/chunks from the patch.
 3. Decompose the prompt into subtasks.
 4. Link subtasks to changed code nodes/chunks.
-5. Extract structural features.
-6. Write all intermediate artifacts plus a compact training_example.json.
-7. Return True iff extraction succeeded.
+5. Embed subtasks and code nodes.
+6. Build canonical graph artifacts.
+7. Extract structural features from the graph inputs.
+8. Write all intermediate artifacts plus training_example.json.
+9. Return True iff graph/feature construction succeeded.
 
 Important:
 - This plugin does NOT load a trained model.
 - This plugin does NOT run inference.
-- True means "feature extraction succeeded", not "patch is safe".
+- True means "artifact construction succeeded", not "patch is safe".
 """
 
 from __future__ import annotations
@@ -23,17 +25,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Trigger parser registrations.
+import src.baseline.structural_misalignment.parsers.prompt.deterministic_subtasks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.prompt.llm_subtasks  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.cfg_ast  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.cfg_ast_scoped  # noqa: F401
 import src.baseline.structural_misalignment.parsers.patch.llm_chunks  # noqa: F401
+import src.baseline.structural_misalignment.parsers.linking.embedding_similarity  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.llm_grounding  # noqa: F401
 import src.baseline.structural_misalignment.parsers.linking.llm_grounding_iterative  # noqa: F401
-import src.baseline.structural_misalignment.parsers.linking.embedding_similarity  # noqa: F401
 
 from src.baseline.base import BaseDefense
 from src.baseline.registry import register_baseline
 from src.baseline.structural_misalignment.cfg.stats import compute_cfg_stats
+from src.baseline.structural_misalignment.embeddings import (
+    encode_texts,
+    serialize_code_node_for_embedding,
+)
 from src.baseline.structural_misalignment.features.schema import (
     FEATURE_SCHEMA_VERSION,
     STRUCTURAL_FAMILY_MODES,
@@ -46,7 +53,17 @@ from src.baseline.structural_misalignment.features.structural_features import (
     STRUCTURAL_ONLY_FEATURES,
     compute_structural_feature_row,
 )
-from src.baseline.structural_misalignment.grounding.subtasks import DEFAULT_SYSTEM_PROMPT
+from src.baseline.structural_misalignment.graph.build import (
+    build_canonical_graph,
+    write_graph_artifacts,
+)
+from src.baseline.structural_misalignment.grounding.schemas import (
+    normalize_subtasks,
+    serialize_subtask_for_embedding,
+)
+from src.baseline.structural_misalignment.grounding.subtasks import (
+    DEFAULT_SYSTEM_PROMPT,
+)
 from src.baseline.structural_misalignment.parsers.registry import (
     get_linker,
     get_patch_parser,
@@ -57,16 +74,18 @@ from src.common.artifacts import write_hashed_json_artifact
 from src.common.hashing import sha256_text
 
 
-class StructuralMisalignmentFeatureDefense(BaseDefense):
-    """Extract subtasks, changed nodes, grounding links, and feature rows."""
+class StructuralMisalignmentBuildGraphDefense(BaseDefense):
+    """Extract subtasks, changed nodes, grounding links, graphs, and features."""
 
-    name = "structural_misalignment_features"
+    name = "structural_misalignment_build_graph"
 
     def _failure_flags(self, failed_stage: str) -> Dict[str, bool]:
         return {
             "cfg_fail": failed_stage == "cfg",
             "subtasks_fail": failed_stage == "subtasks",
             "grounding_fail": failed_stage == "grounding",
+            "embedding_fail": failed_stage == "embeddings",
+            "graph_fail": failed_stage == "graph",
             "features_fail": failed_stage == "features",
         }
 
@@ -111,16 +130,16 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
                 "extract_only": True,
                 "mode": mode,
                 "error": (
-                    "structural_misalignment_features currently supports only "
+                    "structural_misalignment_build_graph currently supports only "
                     f"structural-family modes, got {mode}"
                 ),
                 "failure_flags": self._failure_flags("features"),
             }
             return False
 
-        # Similarity modes require a train-fitted vectorizer. This extract-only
-        # plugin intentionally starts with structural_only so the generated
-        # examples can later be split into train/test before vectorizer fitting.
+        # Similarity modes require a train-fitted vectorizer. The graph-build
+        # pass intentionally starts with structural_only so the generated
+        # examples can later be split before vectorizer fitting.
         include_similarity = mode in {"similarity_only", "structural_combined"}
         if include_similarity and not bool(self.config.get("allow_unfitted_similarity", False)):
             self.last_signals = {
@@ -209,6 +228,8 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
             "cfg_ready": False,
             "subtasks_ready": False,
             "grounding_ready": False,
+            "embeddings_ready": False,
+            "graph_ready": False,
             "features_ready": False,
             "training_example_ready": False,
         }
@@ -240,7 +261,7 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
                 raise ValueError("empty_patch")
 
             if mode not in STRUCTURAL_FAMILY_MODES:
-                raise ValueError(f"Unsupported extract-only mode: {mode}")
+                raise ValueError(f"Unsupported graph-build mode: {mode}")
 
             selected_cols = self._selected_columns_for_mode(mode)
             canonical_feature_set = feature_set_name(mode)
@@ -423,7 +444,107 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
             stage_status["grounding_ready"] = True
             persist_stage_status()
 
-            # ----- Stage 4: feature extraction -----
+            # ----- Stage 4: embeddings -----
+            current_stage = "embeddings"
+
+            structured_subtasks = normalize_subtasks(list(subtasks))
+            subtask_texts = [str(subtask.get("text", "")) for subtask in structured_subtasks]
+            if not structured_subtasks and subtasks:
+                structured_subtasks = normalize_subtasks([str(item) for item in subtasks])
+                subtask_texts = [str(subtask.get("text", "")) for subtask in structured_subtasks]
+
+            embedding_cfg = self.config.get("embeddings")
+            if not isinstance(embedding_cfg, dict):
+                embedding_cfg = {}
+            embedding_model_name = str(
+                embedding_cfg.get(
+                    "model_name",
+                    self.config.get("embedding_model_name", "microsoft/codebert-base"),
+                )
+            )
+            embedding_pooling = str(
+                embedding_cfg.get(
+                    "pooling",
+                    self.config.get("embedding_pooling", "mean"),
+                )
+            )
+            embedding_batch_size_raw = embedding_cfg.get(
+                "batch_size",
+                self.config.get("embedding_batch_size"),
+            )
+            embedding_batch_size = (
+                int(embedding_batch_size_raw)
+                if embedding_batch_size_raw not in {None, ""}
+                else None
+            )
+            embedding_device = str(
+                embedding_cfg.get(
+                    "device",
+                    self.config.get("embedding_device", ""),
+                )
+                or ""
+            ).strip() or None
+
+            subtask_embeddings = encode_texts(
+                [serialize_subtask_for_embedding(subtask) for subtask in structured_subtasks],
+                model_name=embedding_model_name,
+                pooling=embedding_pooling,
+                batch_size=embedding_batch_size,
+                device=embedding_device,
+            )
+            code_embeddings = encode_texts(
+                [serialize_code_node_for_embedding(node) for node in candidate_nodes],
+                model_name=embedding_model_name,
+                pooling=embedding_pooling,
+                batch_size=embedding_batch_size,
+                device=embedding_device,
+            )
+
+            embeddings_path = write_hashed_json_artifact(
+                defense_root / "embeddings.json",
+                {
+                    "embedding_model_name": embedding_model_name,
+                    "embedding_pooling": embedding_pooling,
+                    "embedding_device": subtask_embeddings.device,
+                    "subtask_count": len(structured_subtasks),
+                    "candidate_node_count": len(candidate_nodes),
+                    "embedding_dim": (
+                        int(subtask_embeddings.vectors.shape[1])
+                        if subtask_embeddings.vectors.ndim == 2
+                        else 0
+                    ),
+                },
+                config_hash=self.baseline_config_hash,
+                refs={
+                    "subtasks": str(subtasks_path),
+                    "candidate_nodes": str(candidate_nodes_path),
+                },
+            )
+            artifact_paths["embeddings"] = str(embeddings_path)
+            stage_status["embeddings_ready"] = True
+            persist_stage_status()
+
+            # ----- Stage 5: graph construction -----
+            current_stage = "graph"
+
+            graph_label = int(label_hint) if label_hint in {0, 1} else 0
+            graph_payload = build_canonical_graph(
+                instance_id=instance_id,
+                graph_label=graph_label,
+                subtasks=structured_subtasks,
+                candidate_nodes=candidate_nodes,
+                code_edges=list(cfg_diff.get("candidate_edges", [])),
+                links=links,
+                subtask_features=subtask_embeddings.vectors,
+                code_features=code_embeddings.vectors,
+            )
+            graph_dir = defense_root / "graph"
+            graph_artifacts = write_graph_artifacts(graph_dir, graph_payload)
+            artifact_paths.update(graph_artifacts)
+            stage_status["graph_ready"] = True
+            persist_stage_status()
+
+            # ----- Stage 6: feature extraction -----
             current_stage = "features"
 
             node_id_to_snippet = {
@@ -435,7 +556,7 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
             # Intentionally no fitted vectorizer here. This first extraction pass
             # should be split into train/test before similarity vectorizer fitting.
             full_row = compute_structural_feature_row(
-                subtasks=subtasks,
+                subtasks=subtask_texts,
                 links=links,
                 node_id_to_snippet=node_id_to_snippet,
                 vectorizer=None,
@@ -476,6 +597,7 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
                 "patch_hash": patch_hash,
                 "prompt_hash": prompt_hash,
                 "label_hint": label_hint,
+                "graph_artifacts": graph_artifacts,
             }
 
             features_path = write_hashed_json_artifact(
@@ -483,6 +605,7 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
                 features_payload,
                 config_hash=self.baseline_config_hash,
                 refs={
+                    "graph_json": graph_artifacts.get("graph_json", ""),
                     "cfg_stats": str(cfg_stats_path),
                     "grounding": str(grounding_path),
                 },
@@ -492,7 +615,7 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
             stage_status["features_ready"] = True
             persist_stage_status()
 
-            # ----- Stage 5: compact training example -----
+            # ----- Stage 7: training example -----
             linked_node_ids = {
                 nid
                 for link in links
@@ -517,13 +640,30 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
                 "patch_hash": patch_hash,
                 "prompt_hash": prompt_hash,
                 "patch_artifact_path": repo_code.get("patch_artifact_path", ""),
+                "code_base": repo_code.get("code_base", repo_id),
+                "row_index": repo_code.get("row_index"),
                 "mode": mode,
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "feature_set_name": canonical_feature_set,
                 "selected_columns": selected_cols,
                 "features": feature_row,
+                "graph": {
+                    "graph_label": graph_label,
+                    "subtask_count": len(graph_payload.get("subtasks", [])),
+                    "code_node_count": len(graph_payload.get("code_nodes", [])),
+                    "subtask_dependency_edges": len(
+                        graph_payload.get("edges", {}).get("subtask_to_subtask", [])
+                    ),
+                    "code_cfg_edges": len(
+                        graph_payload.get("edges", {}).get("code_to_code", [])
+                    ),
+                    "subtask_code_edges": len(
+                        graph_payload.get("edges", {}).get("subtask_to_code", [])
+                    ),
+                    "artifacts": graph_artifacts,
+                },
                 "counts": {
-                    "num_subtasks": len(subtasks),
+                    "num_subtasks": len(structured_subtasks),
                     "num_candidate_nodes": len(candidate_nodes),
                     "num_links_total": sum(
                         len(link.get("node_ids", [])) for link in links
@@ -549,6 +689,13 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
                     "prompt_parser": prompt_parser_name,
                     "patch_parser": patch_parser_name,
                     "linker": linker_name,
+                },
+                "embeddings": {
+                    "model_name": embedding_model_name,
+                    "pooling": embedding_pooling,
+                    "device": subtask_embeddings.device,
+                    "subtask_shape": list(subtask_embeddings.vectors.shape),
+                    "code_shape": list(code_embeddings.vectors.shape),
                 },
                 "llm_metadata": {
                     "subtasks": {
@@ -611,15 +758,20 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
                 },
                 "provider": provider,
                 "model": model,
-                "num_subtasks": len(subtasks),
+                "embedding_model_name": embedding_model_name,
+                "embedding_pooling": embedding_pooling,
+                "num_subtasks": len(structured_subtasks),
                 "num_candidate_nodes": len(candidate_nodes),
                 "num_links_total": sum(len(link.get("node_ids", [])) for link in links),
+                "graph_summary": training_example["graph"],
                 "key_metrics": training_example["key_metrics"],
                 "stage_completed": stage_status,
                 "failure_flags": {
                     "cfg_fail": False,
                     "subtasks_fail": False,
                     "grounding_fail": False,
+                    "embedding_fail": False,
+                    "graph_fail": False,
                     "features_fail": False,
                 },
                 "subtasks_cache_hit": bool(subtasks_meta.get("cache_hit", False)),
@@ -668,4 +820,4 @@ class StructuralMisalignmentFeatureDefense(BaseDefense):
             return False
 
 
-register_baseline("structural_misalignment_features")(StructuralMisalignmentFeatureDefense)
+register_baseline("structural_misalignment_build_graph")(StructuralMisalignmentBuildGraphDefense)

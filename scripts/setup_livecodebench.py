@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Materialize LiveCodeBench code-generation rows as local git repos.
 
-The harness evaluates patch agents, so each LiveCodeBench problem is represented
-as a tiny repository containing solution.py plus public tests. Private tests are
-stored outside those repositories and referenced by path/hash only.
+Each LiveCodeBench problem is represented as a tiny repository containing
+solution.py plus public tests. Private tests are stored outside those
+repositories and referenced by path/hash only in the local manifest.
 """
 
 from __future__ import annotations
@@ -373,12 +373,14 @@ def build_rows(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Prepare LiveCodeBench for the patch-agent harness.")
+    parser = argparse.ArgumentParser(description="Prepare LiveCodeBench repositories for defense scans.")
     parser.add_argument("--release", default="release_latest")
     parser.add_argument("--output", default="data/livecodebench_code_generation_lite_release_latest.jsonl")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
         "--repos-root",
+        "--repos-dir",
+        dest="repos_root",
         default=None,
         help="Optional repo materialization root. Defaults to ~/livecodebench_repos.",
     )

@@ -1,24 +1,32 @@
-name: structural_misalignment_features
-plugin: structural_misalignment_features
+name: structural_misalignment_build_graph
+plugin: structural_misalignment_build_graph
 
 mode: structural_only
 
 parsers:
   prompt: llm_subtasks
-  patch: llm_chunks
-  linking: llm_grounding_iterative
+  patch: cfg_ast
+  linking: embedding_similarity
 
 allow_hunk_fallback: true
 allow_hunk_fallback_non_toy: true
 mask_tokens: true
+link_similarity_threshold: 0.35
+link_topk_fallback: 1
+link_topk_per_subtask: 3
 
 llm:
   provider: openai
-  model: qwen3.5-9b
+  model: gpt-4.1
   temperature: 0.2
   max_retries: 2
   backoff_sec: 1.0
   allow_provider_fallback: false
+
+embeddings:
+  model_name: microsoft/codebert-base
+  pooling: mean
+  device: cpu
 
 grounding:
   node_batch_size: 12

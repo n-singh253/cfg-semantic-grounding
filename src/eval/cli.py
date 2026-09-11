@@ -1,91 +1,38 @@
-"""CLI entrypoints for running one experiment or a matrix."""
+"""Minimal publication CLI entrypoints."""
 
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import List, Optional
 
-from src.common.config import load_yaml
 from src.baseline.registry import list_baselines
-from src.eval.runner import run_attack, run_defense, run_matrix, run_one
 
 
 def parse_args(argv: Optional[List[str]] = None):
-    parser = argparse.ArgumentParser(description="SWE-Bench attack/defense harness")
+    parser = argparse.ArgumentParser(description="CFG semantic grounding publication harness")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    one = sub.add_parser("run_one", help="Run a single experiment.")
-    one.add_argument("--dataset", required=True, choices=["toy", "swebench", "swebench_lite", "swebench_pro", "swebench_plus", "featurebench", "featurebench_lite", "featurebench_full", "livecodebench", "polybench", "polybench_verified", "polybench_500", "polybench_full"])
-    one.add_argument("--split", default="test")
-    one.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids")
-    one.add_argument("--limit", type=int, default=None)
-    one.add_argument("--agent", required=True)
-    one.add_argument("--attack", required=True)
-    one.add_argument("--baseline", required=True)
-    one.add_argument("--fidelity-mode", default="llm", choices=["llm", "surrogate_debug"])
-    one.add_argument(
-        "--swexploit-adv-patches",
+    row_defense = sub.add_parser("run_defense", help="Run a row-level or dataset-level defense baseline.")
+    row_defense.add_argument(
+        "--rows",
         default=None,
-        help="Optional path to SWExploit prebuilt adversarial patches JSON/JSONL.",
+        help="Path to rows.jsonl or rows directory. Required for row-level baselines.",
     )
-    one.add_argument("--out", required=True)
-    one.add_argument("--config-dir", default="configs")
-    one.add_argument("--run-judges", action="store_true")
-    one.add_argument("--repo-reset-each-instance", action="store_true", default=True)
-    one.add_argument("--no-repo-reset-each-instance", dest="repo_reset_each_instance", action="store_false")
-    one.add_argument("--max-patch-attempts", type=int, default=2)
-    one.add_argument("--retry-on-apply-failure", action="store_true", default=True)
-    one.add_argument("--no-retry-on-apply-failure", dest="retry_on_apply_failure", action="store_false")
-
-    matrix = sub.add_parser("run_matrix", help="Run a matrix experiment.")
-    matrix.add_argument("--config", required=True)
-    matrix.add_argument("--out", required=True)
-    matrix.add_argument("--config-dir", default="configs")
-    matrix.add_argument(
-        "--swexploit-adv-patches",
-        default=None,
-        help="Optional global SWExploit prebuilt adversarial patches JSON/JSONL path.",
-    )
-
-    attack = sub.add_parser("run_attack", help="Run attack phase only (generate adversarial prompts and patches).")
-    attack.add_argument("--dataset", required=True, choices=["toy", "swebench", "swebench_lite", "swebench_pro", "swebench_plus", "featurebench", "featurebench_lite", "featurebench_full", "livecodebench", "polybench", "polybench_verified", "polybench_500", "polybench_full"])
-    attack.add_argument("--split", default="test")
-    attack.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids")
-    attack.add_argument("--instance-id-file", default=None, help="Optional file with one instance id per line")
-    attack.add_argument("--limit", type=int, default=None)
-    attack.add_argument("--agent", required=True)
-    attack.add_argument("--attack", required=True)
-    attack.add_argument("--fidelity-mode", default="llm", choices=["llm", "surrogate_debug"])
-    attack.add_argument(
-        "--swexploit-adv-patches",
-        default=None,
-        help="Optional path to SWExploit prebuilt adversarial patches JSON/JSONL.",
-    )
-    attack.add_argument("--out", required=True)
-    attack.add_argument("--config-dir", default="configs")
-    attack.add_argument("--workers", type=int, default=1)
-    attack.add_argument(
-        "--dataset-data-path",
-        default=None,
-        help="Optional local dataset JSONL path override for datasets that use data_path.",
-    )
-
-    defense = sub.add_parser("run_defense", help="Run defense phase only (evaluate defense on finalized attack datasets).")
-    defense.add_argument("--attack-results", required=True, help="Path to finalized attack_dataset.jsonl from run_attack")
-    defense.add_argument("--baseline", required=True)
-    defense.add_argument("--fidelity-mode", default="llm", choices=["llm", "surrogate_debug"])
-    defense.add_argument("--instance-id", default=None, help="Single instance id or comma-separated ids (filter to test set)")
-    defense.add_argument("--limit", type=int, default=None)
-    defense.add_argument("--out", required=True)
-    defense.add_argument("--config-dir", default="configs")
-    defense.add_argument("--run-judges", action="store_true")
-    defense.add_argument("--repo-reset-each-instance", action="store_true", default=True)
-    defense.add_argument("--no-repo-reset-each-instance", dest="repo_reset_each_instance", action="store_false")
-    defense.add_argument("--max-patch-attempts", type=int, default=2)
-    defense.add_argument("--retry-on-apply-failure", action="store_true", default=True)
-    defense.add_argument("--no-retry-on-apply-failure", dest="retry_on_apply_failure", action="store_false")
+    row_defense.add_argument("--baseline", required=True)
+    row_defense.add_argument("--fidelity-mode", default="llm", choices=["llm", "surrogate_debug"])
+    row_defense.add_argument("--out", required=True)
+    row_defense.add_argument("--config-dir", default="configs")
+    row_defense.add_argument("--repos-root", default=None)
+    row_defense.add_argument("--workers", type=int, default=1)
+    row_defense.add_argument("--limit", type=int, default=None)
+    row_defense.add_argument("--code-base", action="append", default=[])
+    row_defense.add_argument("--code-base-file", default=None)
+    row_defense.add_argument("--recursive", action="store_true")
+    row_defense.add_argument("--strict-rows", action="store_true")
+    row_defense.add_argument("--no-resume", dest="resume", action="store_false")
+    row_defense.set_defaults(resume=True)
+    row_defense.add_argument("--scanner-timeout-sec", type=int, default=120)
 
     sub.add_parser("list_baselines", help="List registered defense/baseline plugins.")
 
@@ -94,95 +41,39 @@ def parse_args(argv: Optional[List[str]] = None):
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
-    cli_invocation = " ".join(["python", "-m", "src.eval.cli", *sys.argv[1:]])
     if args.command == "list_baselines":
         for name in sorted(list_baselines()):
             print(name)
         return 0
 
-    if args.command == "run_one":
-        instance_ids = None
-        if args.instance_id:
-            instance_ids = [x.strip() for x in args.instance_id.split(",") if x.strip()]
-        run_one(
-            dataset_name=args.dataset,
-            split=args.split,
-            instance_ids=instance_ids,
-            limit=args.limit,
-            agent_name=args.agent,
-            attack_name=args.attack,
-            baseline_name=args.baseline,
-            fidelity_mode=args.fidelity_mode,
-            out_dir=Path(args.out),
-            config_dir=Path(args.config_dir),
-            cli_invocation=cli_invocation,
-            run_judges=bool(args.run_judges),
-            swexploit_adv_patches=args.swexploit_adv_patches,
-            repo_reset_each_instance=bool(args.repo_reset_each_instance),
-            max_patch_attempts=int(args.max_patch_attempts),
-            retry_on_apply_failure=bool(args.retry_on_apply_failure),
-        )
-        return 0
-
-    if args.command == "run_attack":
-        instance_ids = None
-        if args.instance_id:
-            instance_ids = [x.strip() for x in args.instance_id.split(",") if x.strip()]
-        if args.instance_id_file:
-            file_ids = [
-                x.strip()
-                for x in Path(args.instance_id_file).read_text(encoding="utf-8").splitlines()
-                if x.strip()
-            ]
-            instance_ids = [*(instance_ids or []), *file_ids]
-        run_attack(
-            dataset_name=args.dataset,
-            split=args.split,
-            instance_ids=instance_ids,
-            limit=args.limit,
-            agent_name=args.agent,
-            attack_name=args.attack,
-            fidelity_mode=args.fidelity_mode,
-            out_dir=Path(args.out),
-            config_dir=Path(args.config_dir),
-            cli_invocation=cli_invocation,
-            swexploit_adv_patches=args.swexploit_adv_patches,
-            dataset_data_path=args.dataset_data_path,
-        )
-        return 0  
-
-
     if args.command == "run_defense":
-        instance_ids = None
-        if args.instance_id:
-            instance_ids = [x.strip() for x in args.instance_id.split(",") if x.strip()]
+        from src.eval.defense import run_defense
+
+        code_bases = list(args.code_base)
+        if args.code_base_file:
+            code_bases.extend(
+                line.strip()
+                for line in Path(args.code_base_file).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
         run_defense(
-            attack_results_path=Path(args.attack_results),
+            rows_path=Path(args.rows) if args.rows else None,
             baseline_name=args.baseline,
             fidelity_mode=args.fidelity_mode,
             out_dir=Path(args.out),
             config_dir=Path(args.config_dir),
-            cli_invocation=cli_invocation,
-            instance_ids=instance_ids,
+            repos_root=Path(args.repos_root) if args.repos_root else None,
+            workers=args.workers,
             limit=args.limit,
-            run_judges=bool(args.run_judges),
-            repo_reset_each_instance=bool(args.repo_reset_each_instance),
-            max_patch_attempts=int(args.max_patch_attempts),
-            retry_on_apply_failure=bool(args.retry_on_apply_failure),
+            code_bases=code_bases,
+            recursive=bool(args.recursive),
+            strict_rows=bool(args.strict_rows),
+            resume=bool(args.resume),
+            scanner_timeout_sec=int(args.scanner_timeout_sec),
         )
         return 0
 
-    matrix_cfg = load_yaml(Path(args.config))
-    if args.swexploit_adv_patches:
-        matrix_cfg = dict(matrix_cfg)
-        matrix_cfg["swexploit_adv_patches"] = args.swexploit_adv_patches
-    run_matrix(
-        matrix_config=matrix_cfg,
-        out_dir=Path(args.out),
-        config_dir=Path(args.config_dir),
-        cli_invocation=cli_invocation,
-    )
-    return 0
+    raise SystemExit(f"Unknown command: {args.command}")
 
 
 if __name__ == "__main__":

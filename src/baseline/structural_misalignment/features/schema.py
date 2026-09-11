@@ -1,33 +1,21 @@
-"""Feature schema/version contracts for structural misalignment defense."""
+"""Feature schema/version contracts for structural feature extraction."""
 
 from __future__ import annotations
 
 from typing import Dict, List
 
-# Feature schema version
-# v1: Original 29 features
-# v2: Extended 47 features
 FEATURE_SCHEMA_VERSION = "v2"
 
 CANONICAL_MODE_NAMES: Dict[str, str] = {
     "structural_only": "structural_only",
     "similarity_only": "similarity_only",
     "structural_combined": "structural_combined",
-    "full_universal": "full_universal",
-    "severity_only_universal": "severity_only_universal",
-    "no_security": "no_security",
 }
 
 STRUCTURAL_FAMILY_MODES = {
     "structural_only",
     "similarity_only",
     "structural_combined",
-}
-
-UNIVERSAL_FAMILY_MODES = {
-    "full_universal",
-    "severity_only_universal",
-    "no_security",
 }
 
 ALL_SUPPORTED_MODES = set(CANONICAL_MODE_NAMES.keys())

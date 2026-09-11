@@ -55,7 +55,7 @@ def _called_functions(node: ast.AST) -> List[str]:
 
 
 class CFGBuilder:
-    """Build a lightweight CFG for one function."""
+    """Build a CFG for one function."""
 
     def __init__(self, source_lines: List[str], function_name: str, file_path: str) -> None:
         self.source_lines = source_lines

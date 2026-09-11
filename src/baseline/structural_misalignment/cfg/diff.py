@@ -533,6 +533,11 @@ def compute_cfg_diff_for_patch(
                     diagnostics["changed_range_error"] = range_error
                 filtered_cfg_diff = _filter_cfg_diff_to_changed_ranges(cfg_diff, changed_ranges)
                 candidates = get_diff_candidate_nodes(filtered_cfg_diff)
+                if raw_candidates and not candidates:
+                    filtered_cfg_diff = cfg_diff
+                    candidates = raw_candidates
+                    diagnostics["filter_fallback_used"] = True
+                    diagnostics["filter_fallback_reason"] = "changed_range_filter_removed_all_candidates"
                 diagnostics["filtered_candidate_node_count"] = len(candidates)
                 filtered_cfg_diff.setdefault("summary", {})
                 filtered_cfg_diff["summary"].update(

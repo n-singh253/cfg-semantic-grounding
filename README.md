@@ -1,320 +1,106 @@
-# CFG Semantic Grounding Harness
+# CFG Semantic Grounding
 
-`cfg-semantic-grounding` is a SWE-Bench harness for comparing patch agents, attacks, and defenses with reproducible artifacts.
+Get the rows.jsonl data.
 
-Public APIs used by the runner:
-
-- `attack(repo_code, ori_prompt, all_tests) -> adv_prompt`
-- `defense(prompt, code_or_patch, all_tests, repo_code) -> True | False | new_code`
-
-`baseline/` is the defense package. Defense return semantics:
-
-- `True`: accept attacked patch unchanged
-- `False`: reject patch
-- `new_code`: edit path (unified diff => edited patch, otherwise treated as edited prompt and agent reruns once)
-
-## Repository Structure
-
-```text
-src/
-  attack/      # attack plugins (LLM-driven by default)
-  baseline/    # defense plugins
-  agent/       # patch-agent wrappers
-  dataset/     # dataset adapters
-  eval/        # runner + CLI
-  common/      # shared utilities (llm, hashing, artifacts, subprocess, prompts)
-configs/
-  datasets/ 
-  agents/ 
-  attacks/ 
-  baselines/ 
-  runs/
-scripts/       # bootstrap + helper scripts
-data/          # local dataset/model artifacts
-outputs/       # run artifacts/results
-```
-
-## Quickstart
-
+Downloading and setting the repositories for each benchmark:
 ```bash
-cd /cfg-semantic-grounding
-bash scripts/bootstrap_env.sh
-source .venv/bin/activate
-```
-
-Optional extras:
-
-```bash
-bash scripts/bootstrap_env.sh --with-llm --with-static-tools
-```
-
-## Required Environment Variables (LLM Runs)
-
-Set based on provider:
-
-- `OPENAI_API_KEY`
-- `GOOGLE_API_KEY`
-- `ANTHROPIC_API_KEY`
-
-Example:
-
-```bash
-export OPENAI_API_KEY="<key>"
-```
-
-## Configure Datasets
-
-Dataset YAML files are in `configs/datasets/`.
-
-For non-toy datasets, set `data_path` in:
-
-- `configs/datasets/lite.yaml`
-- `configs/datasets/pro.yaml`
-- `configs/datasets/plus.yaml`
-
-Helper script for local starter data:
-
-```bash
-python scripts/init_dataset.py \
+python scripts/setup_swebench.py \
   --dataset swebench_lite \
-  --repo-path /abs/path/to/local/repo \
-  --base-commit HEAD \
-  --output data/swebench_lite_local.jsonl
+  --repos-dir /proj/arise/arise/hj2742/SWEBench \
+  --output /proj/arise/arise/hj2742/cfg-semantic-grounding/data/swebench_lite_local.jsonl
 ```
 
-## Configure Agent CLIs
-
-Agent command wrappers are configured in `configs/agents/*.yaml`.
-If the CLI binary is on your `PATH`, the wrapper can call it.
-For real SWE-Bench runs, each agent config uses `--prompt {agent_prompt}` so the runner passes:
-
-- issue text
-- instance/repo/base_commit context
-- explicit test commands (`all_tests`)
-- instruction to return unified diff only
-The shared template is centralized at `src/common/prompt_templates.py` (`AGENT_PATCH_PROMPT_TEMPLATE`).
-
-Behavior when CLI is missing is controlled by each agent config (`missing_tool_behavior: fail|skip`).
-
-## CLI Commands
+```bash
+python scripts/setup_featurebench.py \
+  --variant full \
+  --source-repos-dir /proj/arise/arise/hj2742/FeatureBench-Repo \
+  --repos-dir /proj/arise/arise/hj2742/FeatureBench-Instance-Repo
+```
 
 ```bash
-python -m src.eval.cli --help
-python -m src.eval.cli run_one --help
-python -m src.eval.cli run_matrix --help
+python scripts/setup_livecodebench.py \
+  --release release_latest \
+  --output /proj/arise/arise/hj2742/cfg-semantic-grounding/data/livecodebench_code_generation_lite_release_latest.jsonl \
+  --repos-dir /proj/arise/arise/hj2742/LiveCodeBench-Instance-Repo
+```
+
+Running baselines:
+```bash
 python -m src.eval.cli list_baselines
 ```
 
-### `run_one`
-
 ```bash
-python -m src.eval.cli run_one \
-  --dataset toy \
-  --agent dummy \
-  --attack none \
-  --baseline prompt_filter \
-  --out outputs/runs/toy1
+python -m src.eval.cli run_defense \
+  --rows /proj/arise/arise/hj2742/cfg-semantic-grounding/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl \
+  --baseline semgrep \
+  --repos-root /proj/arise/arise/hj2742/LiveCodeBench-Instance-Repo \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/defense/semgrep_fcv_livecodebench_openhands_qwen3 \
+  --workers 4
 ```
 
-### Structural Defense Smoke
-
 ```bash
-python -m src.eval.cli run_one \
-  --dataset toy \
-  --agent dummy \
-  --attack none \
-  --baseline structural_misalignment \
-  --out outputs/runs/toy_struct
+python -m src.eval.cli run_defense \
+  --rows /proj/arise/arise/hj2742/cfg-semantic-grounding/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl \
+  --baseline bandit \
+  --repos-root /proj/arise/arise/hj2742/LiveCodeBench-Instance-Repo \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/defense/bandit_fcv_livecodebench_openhands_qwen3 \
+  --workers 4
 ```
 
-### Real Smoke (requires dataset + tools)
-
 ```bash
-python -m src.eval.cli run_one \
-  --dataset swebench_lite \
-  --split test \
-  --limit 1 \
-  --agent openhands \
-  --attack none \
-  --baseline structural_misalignment \
-  --fidelity-mode llm \
-  --out outputs/runs/smoke_structural
+OPENAI_API_KEY=sk-your-key \
+python -m src.eval.cli run_defense \
+  --rows /proj/arise/arise/hj2742/cfg-semantic-grounding/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl \
+  --baseline llm_judge \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/defense/llm_judge_fcv_livecodebench_openhands_qwen3 \
+  --workers 4
 ```
 
-### Matrix Run
-
+Synthetic data generation:
 ```bash
-python -m src.eval.cli run_matrix \
-  --config configs/runs/example_matrix.yaml \
-  --out outputs/runs/matrix_toy
+python scripts/generate_synthetic_rows.py \
+  /proj/arise/arise/hj2742/cfg-semantic-grounding/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/synthetic/fcv_livecodebench_openhands_qwen3_openai \
+  --provider openai \
+  --model gpt-4.1 \
+  --workers 4 \
+  --on-error skip
 ```
 
-## Pipeline Order (Exact)
+Build graphs and extract features:
+```bash
+python -m src.eval.cli run_defense \
+  --rows /proj/arise/arise/hj2742/cfg-semantic-grounding/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl \
+  --baseline structural_misalignment_build_graph \
+  --repos-root /proj/arise/arise/hj2742/LiveCodeBench-Instance-Repo \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/graphs/real_fcv_livecodebench_openhands_qwen3_openai \
+  --workers 4 \
+  --no-resume
+```
 
-1. load instance (`repo_code`, `ori_prompt`, `all_tests`)
-2. `ori_patch = agent(repo_code, ori_prompt, all_tests)`
-3. `adv_prompt = attack(repo_code, ori_prompt, all_tests)`
-4. `adv_patch = agent(repo_code, adv_prompt, all_tests)`
-5. `decision = defense(adv_prompt, adv_patch, all_tests, repo_code)`
-6. resolve decision: accept/reject/edit
-7. apply final patch (if not rejected)
-8. run tests
-9. run static checks
-10. optional LLM judges
-11. write artifacts + `results.jsonl`
+```bash
+HF_HOME=/proj/arise/arise/hj2742/.cache/huggingface \
+OPENAI_API_KEY=sk-your-key \
+python -m src.eval.cli run_defense \
+  --rows /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/synthetic/fcv_livecodebench_openhands_qwen3_openai/rows_synthetic.jsonl \
+  --baseline structural_misalignment_build_graph \
+  --repos-root /proj/arise/arise/hj2742/LiveCodeBench-Instance-Repo \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/graphs/synthetic_fcv_livecodebench_openhands_qwen3_openai \
+  --workers 4 \
+  --no-resume
+```
 
-Edit resolution:
+Train and evaluate models:
+```bash
+python -m src.eval.cli run_defense \
+  --baseline structural_misalignment_eval_features \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/structural_eval/fcv_livecodebench_openhands_qwen3_features \
+  --no-resume
+```
 
-- unified diff => edited patch
-- otherwise => edited prompt, rerun agent once
-
-## Command Option Tables
-
-### `--dataset`
-
-
-| Value           | Config file                  |
-| --------------- | ---------------------------- |
-| `toy`           | `configs/datasets/toy.yaml`  |
-| `swebench_lite` | `configs/datasets/lite.yaml` |
-| `swebench_pro`  | `configs/datasets/pro.yaml`  |
-| `swebench_plus` | `configs/datasets/plus.yaml` |
-
-
-### `--agent`
-
-
-| Value          | Config file                        | External CLI   |
-| -------------- | ---------------------------------- | -------------- |
-| `dummy`        | `configs/agents/dummy.yaml`        | none           |
-| `dummy2`       | `configs/agents/dummy2.yaml`       | none           |
-| `minisweagent` | `configs/agents/minisweagent.yaml` | `minisweagent` |
-| `sweagent`     | `configs/agents/sweagent.yaml`     | `sweagent`     |
-| `openhands`    | `configs/agents/openhands.yaml`    | `openhands`    |
-| `openhands_qwen35_9b` | `configs/agents/openhands_qwen35_9b.yaml` | `openhands` |
-| `claude_code`  | `configs/agents/claude_code.yaml`  | `claude-code`  |
-| `gemini_cli`   | `configs/agents/gemini_cli.yaml`   | `gemini-cli`   |
-
-OpenHands+Qwen setup notes are in `docs/openhands_qwen35_9b.md`.
-
-
-### `--attack`
-
-
-| Value         | Config file                        |
-| ------------- | ---------------------------------- |
-| `none`        | `configs/attacks/none.yaml`        |
-| `bug_reports` | `configs/attacks/bug_reports.yaml` |
-| `udora`       | `configs/attacks/udora.yaml`       |
-| `swexploit`   | `configs/attacks/swexploit.yaml`   |
-| `fcv`         | `configs/attacks/fcv.yaml`         |
-
-
-### `--baseline` (defense)
-
-
-| Value                     | Config file                                      |
-| ------------------------- | ------------------------------------------------ |
-| `prompt_filter`           | `configs/baselines/prompt_filter.yaml`           |
-| `prompt_rewrite`          | `configs/baselines/prompt_rewrite.yaml`          |
-| `agentic_guard`           | `configs/baselines/agentic_guard.yaml`           |
-| `llm_judge`               | `configs/baselines/llm_judge.yaml`               |
-| `bandit`                  | `configs/baselines/bandit.yaml`                  |
-| `semgrep`                 | `configs/baselines/semgrep.yaml`                 |
-| `structural_misalignment` | `configs/baselines/structural_misalignment.yaml` |
-
-
-### `--fidelity-mode`
-
-
-| Value             | Meaning                          |
-| ----------------- | -------------------------------- |
-| `llm`             | paper-faithful LLM path          |
-| `surrogate_debug` | deterministic/mock fallback path |
-
-
-## Structural Misalignment Defense
-
-`baseline=structural_misalignment` ports the old methodology:
-
-- attack-finalized dataset gating before baseline evaluation
-- deterministic prompt decomposition into structured subtasks
-- deterministic embedding-based subtask->CFG linking
-- hetero graph construction over subtasks, code nodes, and structural edges
-- graph-level GNN inference for benign vs injected classification
-- model inference with explicit `decision_policy`
-- implementation is self-contained under `src/baseline/structural_misalignment/` (`cfg/`, `grounding/`, `graph/`, `models/`, `plugin.py`)
-
-Model artifact note:
-
-- `gnn_model_path` in `configs/baselines/structural_misalignment.yaml` points to a hetero-GNN bundle directory containing `model.pt` and `metadata.json`.
-- Missing/incompatible model artifacts fail clearly and are recorded in `results.jsonl -> defense_signals.error`.
-- No silent heuristic fallback is used on the primary path.
-
-Additional defense config options:
-
-- `parsers.prompt`, `parsers.patch`, `parsers.linking`:
-choose parser implementations for subtask extraction, patch parsing, and grounding.
-Example parser-enabled config: `configs/baselines/structural_misalignment_test.yaml`.
-- `embedding_model_name`, `embedding_pooling`, `link_similarity_threshold`, `link_topk_fallback`:
-control deterministic graph construction and linking.
-- `gnn_model_type`, `threshold`, `seed`:
-control the loaded model architecture metadata, decision threshold, and reproducibility settings.
-
-## Output Artifacts
-
-Per run:
-
-- `outputs/runs/<run_id>/integration_spec.json`
-- `outputs/runs/<run_id>/dataset_report.json`
-- `outputs/runs/<run_id>/results.jsonl`
-- `outputs/runs/<run_id>/logs/`
-- `outputs/runs/<run_id>/artifacts/`
-
-Patch artifacts per instance:
-
-- `artifacts/patches/<instance_id>/ori_patch.diff`
-- `artifacts/patches/<instance_id>/adv_patch.diff`
-- `artifacts/patches/<instance_id>/final_patch.diff` (if edited)
-
-Structural defense artifacts:
-
-- `artifacts/defenses/<instance_id>/structural_misalignment/graph/graph.json`
-- `.../graph/graph.pt` (when PyG is available)
-- `.../subtasks/similarity_matrix.json` and related deterministic parser/link artifacts
-- `.../model_output.json`
-- `.../severity.json` (`full_universal`/`severity_only_universal`/`no_security`)
-
-Progressive save + resume:
-
-- LLM stages (attacks, subtasks, grounding, judges) write prompt/response/metadata artifacts immediately and cache by deterministic key.
-- `results.jsonl` is append-only with flush/fsync per row.
-- Re-running the same config in the same `--out` directory reuses cached LLM calls and skips already-completed instances.
-
-## Matrix Configs
-
-- `configs/runs/example_matrix.yaml`: local toy smoke matrix
-- `configs/runs/swebench_lite_starter.yaml`: starter real matrix template
-
-## Helper Scripts
-
-- `scripts/bootstrap_env.sh`: create venv/install deps
-- `scripts/check_prereqs.py`: tool/key/data checks
-- `scripts/init_dataset.py`: create starter local dataset rows
-- `scripts/init_structural_model.py`: create local demo structural model bundle
-
-## Port Mapping Audit (Old -> New)
-
-This defense port was copied/adapted from the previous repo modules into the new harness layout:
-
-
-| Old repo source                                                   | New repo destination                                                                                                                                                                                                    |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `utils/cfg_extractor.py`                                          | `src/baseline/structural_misalignment/cfg/build.py`                                                                                                                                                                     |
-| `utils/cfg_diff.py`                                               | `src/baseline/structural_misalignment/cfg/diff.py`                                                                                                                                                                      |
-| `utils/cfg_grounding.py`                                          | `src/baseline/structural_misalignment/cfg/diff.py` + `src/baseline/structural_misalignment/grounding/*`                                                                                                                 |
-| `utils/llm_clients.py` (subtasks/linking prompt/parsing behavior) | `src/baseline/structural_misalignment/grounding/subtasks.py`, `src/baseline/structural_misalignment/grounding/link.py`, `src/baseline/structural_misalignment/grounding/schemas.py`                                     |
-| `utils/misalignment_features.py`                                  | `src/baseline/structural_misalignment/features/structural_features.py`                                                                                                                                                  |
-| legacy universal feature extractor module                         | `src/baseline/structural_misalignment/features/universal_features.py`                                                                                                                                                   |
-| `utils/security_filters.py`                                       | `src/baseline/structural_misalignment/security/patterns.py`, `src/baseline/structural_misalignment/security/severity.py`                                                                                                |
-| `scripts/run_attack_suite.py` model-bundle/eval-only guardrails   | `src/baseline/structural_misalignment/models/load.py`, `src/baseline/structural_misalignment/models/infer.py`, `src/baseline/structural_misalignment/models/train.py`, `src/baseline/structural_misalignment/plugin.py` |
+```bash
+python -m src.eval.cli run_defense \
+  --baseline structural_misalignment_eval_gnn \
+  --out /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/structural_eval/fcv_livecodebench_openhands_qwen3_gnn \
+  --no-resume
+```

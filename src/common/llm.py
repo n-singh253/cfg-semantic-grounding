@@ -6,6 +6,8 @@ import json
 import multiprocessing as mp
 import os
 import shlex
+import shutil
+import subprocess
 import threading
 import time
 import traceback
@@ -365,7 +367,92 @@ class LLMClient:
             return self._call_anthropic_vertex(model=model, prompt=prompt, temperature=temperature)
         if normalized in {"anthropic", "claude"}:
             return self._call_anthropic(model=model, prompt=prompt, temperature=temperature)
+        if normalized in {"litellm", "vertex_litellm"}:
+            return self._call_litellm(
+                provider=normalized,
+                model=model,
+                prompt=prompt,
+                temperature=temperature,
+                seed=seed,
+                max_output_tokens=max_output_tokens,
+            )
         raise ValueError(f"Unsupported LLM provider: {provider}")
+
+    @staticmethod
+    def _call_litellm(
+        *,
+        provider: str,
+        model: str,
+        prompt: str,
+        temperature: float,
+        seed: Optional[int],
+        max_output_tokens: Optional[int] = None,
+    ) -> tuple[str, Dict[str, Any]]:
+        from litellm import completion  # pragma: no cover - optional dependency.
+
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": int(max_output_tokens or os.environ.get("LITELLM_MAX_TOKENS", "4096")),
+        }
+        if seed is not None:
+            payload["seed"] = seed
+
+        if provider == "vertex_litellm" or model.startswith("vertex_ai/"):
+            project = (
+                os.environ.get("GOOGLE_CLOUD_PROJECT")
+                or os.environ.get("VERTEXAI_PROJECT")
+                or os.environ.get("PROJECT_ID")
+            )
+            if not project and shutil.which("gcloud"):
+                project = (
+                    subprocess.run(
+                        ["gcloud", "config", "get-value", "project"],
+                        capture_output=True,
+                        check=False,
+                        text=True,
+                    ).stdout.strip()
+                    or None
+                )
+            location = (
+                os.environ.get("GOOGLE_CLOUD_LOCATION")
+                or os.environ.get("VERTEXAI_LOCATION")
+                or os.environ.get("REGION")
+                or "global"
+            )
+            if not project:
+                raise RuntimeError(
+                    "Vertex LiteLLM calls require PROJECT_ID, GOOGLE_CLOUD_PROJECT, or VERTEXAI_PROJECT"
+                )
+            if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+                adc_candidates = []
+                cloud_config = os.environ.get("CLOUDSDK_CONFIG")
+                if cloud_config:
+                    adc_candidates.append(Path(cloud_config) / "application_default_credentials.json")
+                original_home = os.environ.get("ORIGINAL_HOME")
+                if original_home:
+                    adc_candidates.append(
+                        Path(original_home) / ".config" / "gcloud" / "application_default_credentials.json"
+                    )
+                adc_candidates.append(Path.home() / ".config" / "gcloud" / "application_default_credentials.json")
+                for adc_path in adc_candidates:
+                    if adc_path.exists():
+                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(adc_path)
+                        break
+            payload["vertex_project"] = project
+            payload["vertex_location"] = location
+
+        resp = completion(**payload)
+        text = (resp.choices[0].message.content or "").strip()
+        usage = {}
+        if getattr(resp, "usage", None) is not None:
+            usage = {
+                "prompt_tokens": getattr(resp.usage, "prompt_tokens", None),
+                "completion_tokens": getattr(resp.usage, "completion_tokens", None),
+                "total_tokens": getattr(resp.usage, "total_tokens", None),
+            }
+        return text, usage
 
     @staticmethod
     def _call_vllm(
@@ -691,13 +778,21 @@ class LLMClient:
             os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
             or os.environ.get("GOOGLE_CLOUD_PROJECT")
             or os.environ.get("VERTEXAI_PROJECT")
+            or os.environ.get("PROJECT_ID")
         )
-        region = os.environ.get("ANTHROPIC_VERTEX_REGION") or os.environ.get("VERTEXAI_LOCATION")
+        region = (
+            os.environ.get("ANTHROPIC_VERTEX_REGION")
+            or os.environ.get("VERTEXAI_LOCATION")
+            or os.environ.get("REGION")
+        )
         credentials_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         if not project_id:
-            raise RuntimeError("ANTHROPIC_VERTEX_PROJECT_ID or GOOGLE_CLOUD_PROJECT is not set")
+            raise RuntimeError(
+                "ANTHROPIC_VERTEX_PROJECT_ID, GOOGLE_CLOUD_PROJECT, "
+                "VERTEXAI_PROJECT, or PROJECT_ID is not set"
+            )
         if not region:
-            raise RuntimeError("ANTHROPIC_VERTEX_REGION or VERTEXAI_LOCATION is not set")
+            raise RuntimeError("ANTHROPIC_VERTEX_REGION, VERTEXAI_LOCATION, or REGION is not set")
         if credentials_path and not Path(credentials_path).expanduser().exists():
             raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS points to a missing file")
 

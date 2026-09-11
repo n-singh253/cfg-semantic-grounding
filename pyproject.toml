@@ -5,18 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cfg-semantic-grounding"
 version = "0.1.0"
-description = "Clean SWE-Bench attack/defense group-testing harness"
+description = "Publication pipeline for CFG semantic grounding defense evaluation"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "pyyaml>=6.0",
-  "rich>=13.0",
   "numpy>=1.24",
   "scikit-learn>=1.3",
   "joblib>=1.3",
   "google-genai>=1.0.0",
   "datasets>=2.18.0",
-  "mini-swe-agent>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -24,11 +22,15 @@ pydantic = ["pydantic>=2.0"]
 llm = [
   "openai>=1.0",
   "anthropic>=0.34",
+  "litellm>=1.0",
   "google-generativeai>=0.7.0",
   "google-genai>=1.0.0",
-  "mini-swe-agent>=2.0.0",
 ]
-embeddings = [
+static = [
+  "bandit>=1.7",
+  "semgrep>=1.0",
+]
+guards = [
   "torch>=2.2",
   "transformers>=4.40",
 ]

@@ -11,13 +11,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
-import yaml
-
 
 DATASET_OPTIONS: Dict[str, Dict[str, str]] = {
     "swebench_lite": {
         "hf_dataset": "princeton-nlp/SWE-bench_Lite",
-        "config_file": "configs/datasets/lite.yaml",
         "output": "data/swebench_lite_local.jsonl",
         "repos_env": "CFG_SWEBENCH_LITE_REPOS_DIR",
         "repos_dir": "data/repos/swebench_lite",
@@ -25,7 +22,6 @@ DATASET_OPTIONS: Dict[str, Dict[str, str]] = {
     },
     "swebench_pro": {
         "hf_dataset": "princeton-nlp/SWE-bench",
-        "config_file": "configs/datasets/pro.yaml",
         "output": "data/swebench_pro_local.jsonl",
         "repos_env": "CFG_SWEBENCH_PRO_REPOS_DIR",
         "repos_dir": "data/repos/swebench_pro",
@@ -33,7 +29,6 @@ DATASET_OPTIONS: Dict[str, Dict[str, str]] = {
     },
     "swebench_plus": {
         "hf_dataset": "princeton-nlp/SWE-bench_Multimodal",
-        "config_file": "configs/datasets/plus.yaml",
         "output": "data/swebench_plus_local.jsonl",
         "repos_env": "CFG_SWEBENCH_PLUS_REPOS_DIR",
         "repos_dir": "data/repos/swebench_plus",
@@ -46,7 +41,7 @@ def log(event: str, **kwargs: Any) -> None:
     suffix = ""
     if kwargs:
         suffix = " | " + " ".join(f"{key}={value}" for key, value in sorted(kwargs.items()))
-    print(f"[download-swebench] {event}{suffix}", flush=True)
+    print(f"[setup-swebench] {event}{suffix}", flush=True)
 
 
 def env_value(*names: str, default: str = "") -> str:
@@ -58,7 +53,7 @@ def env_value(*names: str, default: str = "") -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Download local SWE-Bench checkouts")
+    parser = argparse.ArgumentParser(description="Set up local SWE-Bench checkouts")
     parser.add_argument("--dataset", default=env_value("CFG_SWEBENCH_DATASET", default="swebench_lite"), choices=sorted(DATASET_OPTIONS))
     parser.add_argument("--split", default=env_value("CFG_SWEBENCH_SPLIT", default="test"))
     parser.add_argument("--offset", type=int, default=int(env_value("CFG_SWEBENCH_OFFSET", default="0")))
@@ -66,7 +61,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=env_value("CFG_SWEBENCH_OUTPUT"))
     parser.add_argument("--repos-dir", default=env_value("CFG_SWEBENCH_REPOS_DIR"))
     parser.add_argument("--hf-dataset", default=env_value("CFG_SWEBENCH_HF_DATASET"))
-    parser.add_argument("--skip-config-update", action="store_true")
     parser.add_argument("--force-reclone", action="store_true")
     return parser.parse_args()
 
@@ -171,17 +165,6 @@ def write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=True) + "\n")
 
 
-def update_dataset_config(config_file: Path, output_path: Path, root: Path) -> None:
-    payload = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"Expected mapping in {config_file}")
-    try:
-        payload["data_path"] = str(output_path.relative_to(root))
-    except ValueError:
-        payload["data_path"] = str(output_path)
-    config_file.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
-
-
 def main() -> int:
     args = parse_args()
     root = repo_root()
@@ -190,7 +173,6 @@ def main() -> int:
     dataset_repos_dir = env_value(defaults["repos_env"], "CFG_SWEBENCH_REPOS_DIR", default=defaults["repos_dir"])
     output_path = resolve_under_root(args.output or defaults["output"], root)
     repos_dir = resolve_under_root(args.repos_dir or dataset_repos_dir, root)
-    config_file = resolve_under_root(defaults["config_file"], root)
     hf_dataset = args.hf_dataset or defaults["hf_dataset"]
     limit = int(args.limit if args.limit is not None else env_value("CFG_SWEBENCH_LIMIT", default=defaults["limit"]))
 
@@ -216,10 +198,6 @@ def main() -> int:
 
     write_jsonl(output_path, materialized_rows)
     log("wrote-jsonl", rows=len(materialized_rows), path=output_path)
-
-    if not args.skip_config_update:
-        update_dataset_config(config_file, output_path, root)
-        log("updated-config", config=config_file)
 
     return 0
 

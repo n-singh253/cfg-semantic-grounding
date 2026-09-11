@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 from pathlib import Path
 from typing import Any, Dict, List
@@ -34,6 +35,17 @@ def set_global_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+
+def _training_device(torch, requested: str | None = None):
+    raw = (os.environ.get("CFG_STRUCTURAL_GNN_DEVICE") or requested or "auto").strip().lower()
+    if raw in {"", "auto"}:
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if raw == "cuda" and not torch.cuda.is_available():
+        return torch.device("cpu")
+    if raw not in {"cpu", "cuda"}:
+        raise ValueError(f"Unsupported GNN training device: {requested!r}")
+    return torch.device(raw)
 
 
 def _graph_label(graph) -> int:
@@ -109,6 +121,7 @@ def train_graph_model(
     seed: int = 42,
     embedding_model_name: str = "microsoft/codebert-base",
     embedding_pooling: str = "mean",
+    device: str | None = None,
 ) -> Dict[str, Any]:
     torch, _, _, _, _, _, _ = _require_training_deps()
     if not train_graphs:
@@ -118,8 +131,8 @@ def train_graph_model(
 
     set_global_seed(seed)
     output_dir.mkdir(parents=True, exist_ok=True)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = HeteroGraphClassifier(input_dim=768, hidden_dim=hidden_dim, dropout=dropout).to(device)
+    train_device = _training_device(torch, device)
+    model = HeteroGraphClassifier(input_dim=768, hidden_dim=hidden_dim, dropout=dropout).to(train_device)
 
     train_loader = _build_loader(train_graphs, batch_size=batch_size, weighted=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -129,7 +142,7 @@ def train_graph_model(
     class_weights = torch.tensor(
         [len(labels) / (2 * benign_count), len(labels) / (2 * malicious_count)],
         dtype=torch.float32,
-        device=device,
+        device=train_device,
     )
     loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
@@ -141,7 +154,7 @@ def train_graph_model(
         epoch_loss = 0.0
         batch_count = 0
         for batch in train_loader:
-            batch = batch.to(device)
+            batch = batch.to(train_device)
             optimizer.zero_grad()
             logits = model(batch)
             loss = loss_fn(logits, batch.y.view(-1))
@@ -182,6 +195,7 @@ def train_graph_model(
         "batch_size": batch_size,
         "learning_rate": learning_rate,
         "seed": seed,
+        "device": str(train_device),
         "embedding_model_name": embedding_model_name,
         "embedding_pooling": embedding_pooling,
         "train_graph_count": len(train_graphs),

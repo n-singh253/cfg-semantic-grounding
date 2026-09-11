@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Prepare FeatureBench rows as patch-agent-ready local git repositories.
+"""Prepare FeatureBench rows as local git repositories for defense scans.
 
 FeatureBench's HF rows are not plain SWE-Bench rows:
 
 * Level 1 rows use ``base_commit`` after the feature exists. The dataset
   ``patch`` is a corruption/removal patch. We apply it to create the actual
-  pre-feature worktree that agents should edit.
-* Level 2 rows have an empty ``patch`` and ask the agent to implement a small
-  package from a minimal/empty repository.
+  pre-feature worktree used as the scan/apply base.
+* Level 2 rows have an empty ``patch`` and describe a small package to build
+  from a minimal/empty repository.
 
-This script materializes those states and writes JSONL files consumed by the
-local eval runner.
+This script materializes those states and writes a local manifest for auditing.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ INSTANCE_REPOS_ROOT = Path(
     os.environ.get("FEATUREBENCH_INSTANCE_REPOS", str(Path.home() / "featurebench_instance_repos"))
 )
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-MATERIALIZATION_VERSION = "featurebench_attack_ready_v2"
+MATERIALIZATION_VERSION = "featurebench_row_defense_ready_v1"
 _SOURCE_REPO_CACHE: Dict[str, Path] = {}
 
 
@@ -172,10 +171,9 @@ def _materialize_level2(row: Dict[str, Any], variant: str, force: bool) -> Dict[
         }
     )
     # Level 2 official tests live in FeatureBench's evaluation image. Locally we
-    # expose a lightweight sanity command so agents are not pointed at missing
-    # repository test paths while generating patches.
+    # expose a basic sanity command for auditing the materialized repo.
     record["original_test_command"] = record["test_command"]
-    record["test_command"] = ["python3", "-m", "compileall", "agent_code"]
+    record["test_command"] = ["python3", "-m", "compileall", "."]
     return record
 
 
@@ -237,9 +235,23 @@ def build_jsonl(rows: Iterable[Dict[str, Any]], variant: str, out_path: Path, fo
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Prepare FeatureBench for the local patch-agent harness.")
+    global SOURCE_REPOS_ROOT, INSTANCE_REPOS_ROOT
+
+    parser = argparse.ArgumentParser(description="Prepare FeatureBench repositories for defense scans.")
     parser.add_argument("--force", action="store_true", help="Recreate all per-instance repositories.")
     parser.add_argument("--variant", choices=["lite", "full", "all"], default="all")
+    parser.add_argument(
+        "--source-repos-dir",
+        default=None,
+        help="Directory for cloned upstream GitHub repositories. Defaults to FEATUREBENCH_SOURCE_REPOS or ~/featurebench_repos.",
+    )
+    parser.add_argument(
+        "--instance-repos-dir",
+        "--repos-dir",
+        dest="instance_repos_dir",
+        default=None,
+        help="Directory for materialized per-instance repositories. Defaults to FEATUREBENCH_INSTANCE_REPOS or ~/featurebench_instance_repos.",
+    )
     parser.add_argument(
         "--instance-id",
         action="append",
@@ -248,6 +260,11 @@ def main() -> int:
     )
     parser.add_argument("--limit", type=int, default=None, help="Materialize at most N rows after filtering.")
     args = parser.parse_args()
+
+    if args.source_repos_dir:
+        SOURCE_REPOS_ROOT = Path(args.source_repos_dir).expanduser().resolve()
+    if args.instance_repos_dir:
+        INSTANCE_REPOS_ROOT = Path(args.instance_repos_dir).expanduser().resolve()
 
     from datasets import load_dataset
 
@@ -260,10 +277,10 @@ def main() -> int:
             print(f"  [skip] split '{variant}' not found")
             continue
         rows = _filter_rows(ds_all[variant], instance_ids=args.instance_id, limit=args.limit)
-        out_path = DATA_DIR / f"featurebench_{variant}_attack_ready.jsonl"
+        out_path = DATA_DIR / f"featurebench_{variant}_local.jsonl"
         filtered_note = ""
         if args.instance_id or args.limit is not None:
-            filtered_note = " (filtered sample; rerun without filters before full attacks)"
+            filtered_note = " (filtered sample; rerun without filters before full experiments)"
         print(f"[2/2] Materializing {variant} -> {out_path} ({len(rows)} instances){filtered_note}")
         n = build_jsonl(rows, variant, out_path, args.force)
         print(f"       Wrote {n} rows")

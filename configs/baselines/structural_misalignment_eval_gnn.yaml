@@ -1,0 +1,26 @@
+name: structural_misalignment_eval_gnn
+plugin: structural_misalignment_eval
+scope: dataset
+
+method: gnn
+train_ratio: 0.7
+seed: 42
+min_candidate_nodes: 1
+
+inputs:
+  data_rows: /proj/arise/arise/hj2742/cfg-semantic-grounding/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl
+  synthetic_rows: /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/synthetic/fcv_lcb_openhands_qwen3_openai_smoke/rows_synthetic.jsonl
+  data_graph_dir: /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/graphs/real_fcv_lcb_openhands_qwen3_openai_smoke
+  synthetic_graph_dir: /proj/arise/arise/hj2742/cfg-semantic-grounding/RES/graphs/synthetic_fcv_lcb_openhands_qwen3_openai_smoke
+
+gnn:
+  output_subdir: gnn_model
+  hidden_dim: 128
+  dropout: 0.1
+  learning_rate: 0.001
+  epochs: 10
+  batch_size: 8
+  seed: 42
+  device: cpu
+  embedding_model_name: microsoft/codebert-base
+  embedding_pooling: mean

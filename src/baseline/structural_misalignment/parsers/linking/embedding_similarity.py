@@ -28,10 +28,11 @@ def embedding_similarity_linker(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     del kwargs
     config = config or {}
-    model_name = str(config.get("embedding_model_name", "microsoft/codebert-base"))
-    pooling = str(config.get("embedding_pooling", "mean"))
-    embedding_batch_size = int(config.get("embedding_batch_size", 0) or 0) or None
-    embedding_device = str(config.get("embedding_device", "") or "").strip() or None
+    embedding_cfg = config.get("embeddings") if isinstance(config.get("embeddings"), dict) else {}
+    model_name = str(embedding_cfg.get("model_name", config.get("embedding_model_name", "microsoft/codebert-base")))
+    pooling = str(embedding_cfg.get("pooling", config.get("embedding_pooling", "mean")))
+    embedding_batch_size = int(embedding_cfg.get("batch_size", config.get("embedding_batch_size", 0)) or 0) or None
+    embedding_device = str(embedding_cfg.get("device", config.get("embedding_device", "")) or "").strip() or None
     threshold = float(config.get("link_similarity_threshold", 0.35))
     topk_fallback = int(config.get("link_topk_fallback", 1))
     topk_per_subtask = int(config.get("link_topk_per_subtask", 3))
