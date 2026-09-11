@@ -1,5 +1,0 @@
-name: featurebench_lite
-plugin: featurebench_lite
-variant: lite
-split: test
-data_path: "data/featurebench_lite_attack_ready.jsonl"

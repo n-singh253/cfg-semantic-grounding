@@ -1,6 +1,0 @@
-name: minisweagent
-plugin: minisweagent
-command: ["mini", "-t", "{agent_prompt}", "-y", "--exit-immediately"]
-output_mode: stdout
-output_parser: unified_diff_auto
-missing_tool_behavior: skip
