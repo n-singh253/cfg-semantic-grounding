@@ -40,7 +40,6 @@ SWEBENCH_ROW_DIRS = [
     DATA_ROOT / "Obfuscated/SWExploit_SWE-Bench_SWEAgent-Claude-3.7",
 ]
 
-"""
 FEATUREBENCH_ROW_DIRS = [
     DATA_ROOT / "Non-Obfuscated/FCV-78_FeatureBench_Claude-Sonnet-4.6",
     DATA_ROOT / "Non-Obfuscated/FCV-78_FeatureBench_MINI-Gemini-3",
@@ -55,9 +54,7 @@ FEATUREBENCH_ROW_DIRS = [
     DATA_ROOT / "Obfuscated/SWExploit_FeatureBench_OpenHands-Qwen3-Coder-30B",
     DATA_ROOT / "Obfuscated/SWExploit_FeatureBench_SWEAgent-Claude-3.7",
 ]
-"""
 
-FEATUREBENCH_ROW_DIRS = []
 
 LIVECODEBENCH_ROW_DIRS = [
     DATA_ROOT / "Non-Obfuscated/FCV-78_LiveCodeBench_MINI-Gemini-3",
