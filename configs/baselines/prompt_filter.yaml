@@ -1,6 +1,0 @@
-name: prompt_filter
-plugin: prompt_filter
-banned_patterns:
-  - "DROP TABLE"
-  - "exfiltrate"
-default_decision: accept

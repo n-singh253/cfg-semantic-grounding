@@ -1,8 +1,24 @@
 name: llm_judge
 plugin: llm_judge
+
+# LLM judge operates independently on each input row.
+scope: row
+
+# Supported providers include openai, vllm, gemini, gemini_vertex,
+# gemini_cli, anthropic, anthropic_vertex, litellm, vertex_litellm,
+# and surrogate.
 provider: openai
-model: gpt-4o-mini
+model: gpt-4o
+
+# raw: prompt + patch; prompt_only: prompt; cfg_stats: prompt + patch + test metadata.
 mode: raw
+
+# Generation and retry controls.
 temperature: 0.0
-reject_threshold: 0.5
+seed: null
+max_retries: 2
+backoff_sec: 1.0
 allow_provider_fallback: false
+
+# Reject when the model's p_reject is greater than or equal to this value.
+reject_threshold: 0.5

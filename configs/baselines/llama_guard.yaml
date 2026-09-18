@@ -6,4 +6,16 @@ plugin: llama_guard
 #   - meta-llama/Llama-Guard-4-12B
 model: meta-llama/Llama-Guard-4-12B
 
+# Maximum tokenized input length per chunk.
 max_length: 4096
+
+# Character chunking before tokenization.
+chunk_chars: 6000
+chunk_overlap_chars: 800
+
+# Llama Guard verdict generation.
+max_new_tokens: 8
+use_cache: true
+
+# One of: prompt, patch, prompt_and_patch.
+input_field: prompt_and_patch

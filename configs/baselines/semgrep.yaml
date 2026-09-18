@@ -1,5 +1,21 @@
 name: semgrep
 plugin: static_semgrep
-command: ["semgrep", "--config", "auto", "--json", "."]
+
+# Semgrep is a row-level baseline. Each row is scanned independently.
+scope: row
+
+# Base command. The runner preserves these arguments, forces JSON output, and
+# supplies a separate report path for the clean and patched scans.
+command:
+  - semgrep
+  - --config
+  - auto
+  - --json
+  - .
+
+# Decision to use when the configured executable is unavailable.
+# Accepted values: accept, reject.
 missing_tool_behavior: reject
+
+# Accept when: after_findings - before_findings <= max_new_findings.
 max_new_findings: 0

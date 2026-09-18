@@ -20,6 +20,8 @@ import json
 import os
 import shutil
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -30,9 +32,10 @@ SOURCE_REPOS_ROOT = Path(
 INSTANCE_REPOS_ROOT = Path(
     os.environ.get("FEATUREBENCH_INSTANCE_REPOS", str(Path.home() / "featurebench_instance_repos"))
 )
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 MATERIALIZATION_VERSION = "featurebench_row_defense_ready_v1"
 _SOURCE_REPO_CACHE: Dict[str, Path] = {}
+_SOURCE_REPO_LOCKS: Dict[str, threading.RLock] = {}
+_SOURCE_REPO_LOCKS_GUARD = threading.Lock()
 
 
 def _run(
@@ -74,20 +77,30 @@ def _repo_path(root: Path, repo_id: str) -> Path:
     return root / org / name
 
 
-def _ensure_source_repo(repo_id: str) -> Path:
-    if repo_id in _SOURCE_REPO_CACHE:
-        return _SOURCE_REPO_CACHE[repo_id]
+def _source_repo_lock(repo_id: str) -> threading.RLock:
+    with _SOURCE_REPO_LOCKS_GUARD:
+        lock = _SOURCE_REPO_LOCKS.get(repo_id)
+        if lock is None:
+            lock = threading.RLock()
+            _SOURCE_REPO_LOCKS[repo_id] = lock
+        return lock
 
-    source = _repo_path(SOURCE_REPOS_ROOT, repo_id)
-    if not (source / ".git").exists():
-        source.parent.mkdir(parents=True, exist_ok=True)
-        print(f"  [clone] {repo_id} -> {source}")
-        _run(["git", "clone", "--quiet", f"https://github.com/{repo_id}.git", str(source)], timeout=1200)
-    else:
-        print(f"  [source] {repo_id} -> {source}")
-    _run(["git", "fetch", "--quiet", "origin"], cwd=source, timeout=1200)
-    _SOURCE_REPO_CACHE[repo_id] = source
-    return source
+
+def _ensure_source_repo(repo_id: str) -> Path:
+    with _source_repo_lock(repo_id):
+        if repo_id in _SOURCE_REPO_CACHE:
+            return _SOURCE_REPO_CACHE[repo_id]
+
+        source = _repo_path(SOURCE_REPOS_ROOT, repo_id)
+        if not (source / ".git").exists():
+            source.parent.mkdir(parents=True, exist_ok=True)
+            print(f"  [clone] {repo_id} -> {source}")
+            _run(["git", "clone", "--quiet", f"https://github.com/{repo_id}.git", str(source)], timeout=1200)
+        else:
+            print(f"  [source] {repo_id} -> {source}")
+        _run(["git", "fetch", "--quiet", "origin"], cwd=source, timeout=1200)
+        _SOURCE_REPO_CACHE[repo_id] = source
+        return source
 
 
 def _remove_existing_instance(source_repo: Path | None, path: Path) -> None:
@@ -128,9 +141,10 @@ def _materialize_level1(row: Dict[str, Any], variant: str, force: bool) -> Dict[
 
     if force or not (dest / ".git").exists():
         print(f"  [lv1] {instance_id}")
-        _remove_existing_instance(source, dest)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        _run(["git", "worktree", "add", "--detach", "--force", str(dest), str(row["base_commit"])], cwd=source)
+        with _source_repo_lock(repo_id):
+            _remove_existing_instance(source, dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            _run(["git", "worktree", "add", "--detach", "--force", str(dest), str(row["base_commit"])], cwd=source)
         _run(["git", "apply", "--whitespace=nowarn", "-p1"], cwd=dest, input_text=patch, timeout=300)
         prepared_commit = _commit_all(dest, f"Prepare FeatureBench corrupted state for {instance_id}")
     else:
@@ -218,20 +232,39 @@ def _filter_rows(
     return rows
 
 
-def build_jsonl(rows: Iterable[Dict[str, Any]], variant: str, out_path: Path, force: bool) -> int:
+def _materialize_row(row: Dict[str, Any], variant: str, force: bool) -> Dict[str, Any]:
+    level = "lv2" if not str(row.get("patch") or "").strip() else "lv1"
+    return (
+        _materialize_level2(row, variant, force)
+        if level == "lv2"
+        else _materialize_level1(row, variant, force)
+    )
+
+
+def build_jsonl(rows: Iterable[Dict[str, Any]], variant: str, out_path: Path, force: bool, workers: int) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    written = 0
+    rows_list = list(rows)
+    records: List[Dict[str, Any] | None] = [None] * len(rows_list)
+    workers = max(1, int(workers))
+
+    if workers == 1:
+        for index, row in enumerate(rows_list):
+            records[index] = _materialize_row(row, variant, force)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_materialize_row, row, variant, force): index
+                for index, row in enumerate(rows_list)
+            }
+            for future in as_completed(futures):
+                records[futures[future]] = future.result()
+
     with out_path.open("w", encoding="utf-8") as handle:
-        for row in rows:
-            level = "lv2" if not str(row.get("patch") or "").strip() else "lv1"
-            record = (
-                _materialize_level2(row, variant, force)
-                if level == "lv2"
-                else _materialize_level1(row, variant, force)
-            )
+        for record in records:
+            if record is None:
+                continue
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            written += 1
-    return written
+    return sum(1 for record in records if record is not None)
 
 
 def main() -> int:
@@ -259,6 +292,7 @@ def main() -> int:
         help="Materialize only this instance id. Can be passed more than once.",
     )
     parser.add_argument("--limit", type=int, default=None, help="Materialize at most N rows after filtering.")
+    parser.add_argument("--workers", type=int, default=1, help="Number of parallel materialization workers.")
     args = parser.parse_args()
 
     if args.source_repos_dir:
@@ -277,12 +311,12 @@ def main() -> int:
             print(f"  [skip] split '{variant}' not found")
             continue
         rows = _filter_rows(ds_all[variant], instance_ids=args.instance_id, limit=args.limit)
-        out_path = DATA_DIR / f"featurebench_{variant}_local.jsonl"
         filtered_note = ""
         if args.instance_id or args.limit is not None:
             filtered_note = " (filtered sample; rerun without filters before full experiments)"
+        out_path = INSTANCE_REPOS_ROOT / f"featurebench_{variant}_local.jsonl"
         print(f"[2/2] Materializing {variant} -> {out_path} ({len(rows)} instances){filtered_note}")
-        n = build_jsonl(rows, variant, out_path, args.force)
+        n = build_jsonl(rows, variant, out_path, args.force, args.workers)
         print(f"       Wrote {n} rows")
 
     print(f"       Source repos: {SOURCE_REPOS_ROOT}")

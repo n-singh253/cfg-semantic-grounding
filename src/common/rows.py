@@ -2,7 +2,7 @@
 
 The publication-facing data format intentionally keeps only four fields:
 
-    {"code_base": str, "label": 0 | 1, "prompt": str, "patch": str}
+    {"code_base": str, "injection": 0 | 1, "prompt": str, "patch": str}
 
 All richer provenance belongs in runner outputs, manifests, or side artifacts.
 """
@@ -20,7 +20,8 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple
 from src.common.subprocess import command_exists, run_command
 
 
-ROW_FIELDS = ("code_base", "label", "prompt", "patch")
+ROW_FIELDS = ("code_base", "injection", "prompt", "patch")
+LEGACY_ROW_FIELDS = ("code_base", "label", "prompt", "patch")
 ROW_FILE_NAMES = ("rows.jsonl", "rows_synthetic.jsonl")
 
 
@@ -53,14 +54,17 @@ def normalize_row(
     if not isinstance(row, dict):
         raise RowSchemaError(f"expected JSON object{_line_context(source, line_no)}")
 
-    missing = [field for field in ROW_FIELDS if field not in row]
+    uses_legacy_label = "injection" not in row and "label" in row
+    required_fields = LEGACY_ROW_FIELDS if uses_legacy_label else ROW_FIELDS
+
+    missing = [field for field in required_fields if field not in row]
     if missing:
         raise RowSchemaError(
             f"missing required fields {missing}{_line_context(source, line_no)}"
         )
 
     if strict_fields:
-        extra = sorted(set(row).difference(ROW_FIELDS))
+        extra = sorted(set(row).difference(required_fields))
         if extra:
             raise RowSchemaError(
                 f"unexpected fields {extra}{_line_context(source, line_no)}"
@@ -70,7 +74,7 @@ def normalize_row(
     if not code_base:
         raise RowSchemaError(f"code_base is empty{_line_context(source, line_no)}")
 
-    label_raw = row.get("label")
+    label_raw = row.get("label") if uses_legacy_label else row.get("injection")
     if label_raw in {0, "0"}:
         label = 0
     elif label_raw in {1, "1"}:
@@ -83,6 +87,7 @@ def normalize_row(
     return {
         "code_base": code_base,
         "label": label,
+        "injection": label,
         "prompt": str(row.get("prompt") or ""),
         "patch": str(row.get("patch") or ""),
     }

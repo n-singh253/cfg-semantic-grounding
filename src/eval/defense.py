@@ -4,20 +4,19 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 import src.baseline  # noqa: F401 - register baseline plugins
 
 from src.baseline.registry import get_baseline
 from src.common.artifact_store import atomic_write_json
 from src.common.config import config_hash, load_component_config
-from src.common.diff import apply_unified_diff_detailed, looks_like_unified_diff
+from src.common.diff import apply_unified_diff_detailed
 from src.common.hashing import sha256_text
 from src.common.rows import (
     infer_benchmark,
@@ -28,6 +27,37 @@ from src.common.rows import (
 )
 from src.common.llm import LLMClient
 from src.common.subprocess import command_exists, run_command
+
+
+_REPO_LOCKS: Dict[str, threading.Lock] = {}
+_REPO_LOCKS_GUARD = threading.Lock()
+
+
+class _ThreadLocalBaselinePool:
+    """Create one reusable baseline instance per executor worker thread."""
+
+    def __init__(self, factory: Callable[[], Any]):
+        self._factory = factory
+        self._local = threading.local()
+
+    def get(self) -> Any:
+        if hasattr(self._local, "instance"):
+            return self._local.instance
+        if hasattr(self._local, "load_error"):
+            raise self._local.load_error
+        try:
+            self._local.instance = self._factory()
+        except Exception as exc:
+            self._local.load_error = exc
+            raise
+        return self._local.instance
+
+
+def _effective_worker_count(baseline_plugin: str, requested_workers: int) -> int:
+    workers = max(1, int(requested_workers))
+    if baseline_plugin == "llama_guard":
+        return 1
+    return workers
 
 
 def _safe_filename(value: str) -> str:
@@ -105,49 +135,6 @@ def _append_jsonl_locked(path: Path, row: Dict[str, Any], lock: threading.Lock) 
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True) + "\n")
             handle.flush()
-
-
-def _extract_added_python_files(patch_text: str) -> Dict[str, str]:
-    """Best-effort patch-to-Python-materialization fallback."""
-
-    files: Dict[str, List[str]] = {}
-    current = "candidate.py"
-    saw_diff = False
-    for line in (patch_text or "").splitlines():
-        if line.startswith("+++ "):
-            raw = line[4:].strip().split("\t", 1)[0]
-            if raw != "/dev/null":
-                current = raw[2:] if raw.startswith("b/") else raw
-            saw_diff = True
-            continue
-        if line.startswith("+") and not line.startswith("+++"):
-            if current.endswith(".py"):
-                files.setdefault(current, []).append(line[1:])
-            continue
-
-    if not saw_diff and patch_text.strip():
-        files["candidate.py"] = [patch_text]
-
-    return {
-        name if name.endswith(".py") else f"{name}.py": "\n".join(lines).rstrip() + "\n"
-        for name, lines in files.items()
-        if any(line.strip() for line in lines)
-    }
-
-
-def _write_patch_snippet_repo(root: Path, patch_text: str) -> Dict[str, Any]:
-    files = _extract_added_python_files(patch_text)
-    if not files and patch_text.strip():
-        files = {"candidate.py": patch_text.rstrip() + "\n"}
-    for rel, content in files.items():
-        path = root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-    return {
-        "mode": "patch_snippets",
-        "file_count": len(files),
-        "files": sorted(files),
-    }
 
 
 def _build_bandit_command(base_command: List[str], report_path: Path) -> List[str]:
@@ -260,46 +247,61 @@ def _static_tool_available(tool: str) -> Tuple[bool, Dict[str, Any]]:
 
 def _prepare_static_workspace(
     *,
-    row: Dict[str, Any],
     repo_path: Path | None,
     work_root: Path,
 ) -> Dict[str, Any]:
-    patch_text = row["patch"]
-    if repo_path and repo_path.exists() and repo_path.is_dir() and looks_like_unified_diff(patch_text):
+    if repo_path is None or not repo_path.is_dir():
+        return {
+            "ok": False,
+            "failure_reason": "invalid_repo_path",
+            "repo_path": str(repo_path or ""),
+        }
+
+    key = str(repo_path.resolve())
+    with _REPO_LOCKS_GUARD:
+        repo_lock = _REPO_LOCKS.setdefault(key, threading.Lock())
+
+    with repo_lock:
         reset_before = reset_git_repo(repo_path)
-        copy_repo_without_git(repo_path, work_root)
-        apply_details = apply_unified_diff_detailed(work_root, patch_text)
-        reset_after = reset_git_repo(repo_path)
-        if bool(apply_details.get("applied")):
+        if not reset_before.get("ok"):
             return {
-                "scan_root": work_root,
-                "input_mode": "isolated_repo_after_patch",
+                "ok": False,
+                "failure_reason": "initial_reset_failed",
+                "repo_path": str(repo_path),
+                "source_reset_before": reset_before,
+            }
+        try:
+            copy_repo_without_git(repo_path, work_root)
+            copy_error = ""
+        except Exception as exc:
+            copy_error = f"{type(exc).__name__}: {exc}"
+        reset_after = reset_git_repo(repo_path)
+
+        if copy_error:
+            return {
+                "ok": False,
+                "failure_reason": "repo_copy_failed",
+                "copy_error": copy_error,
                 "repo_path": str(repo_path),
                 "source_reset_before": reset_before,
                 "source_reset_after": reset_after,
-                "patch_apply": apply_details,
             }
-        shutil.rmtree(work_root, ignore_errors=True)
-        work_root.mkdir(parents=True, exist_ok=True)
-        snippet_details = _write_patch_snippet_repo(work_root, patch_text)
+        if not reset_after.get("ok"):
+            return {
+                "ok": False,
+                "failure_reason": "final_reset_failed",
+                "repo_path": str(repo_path),
+                "source_reset_before": reset_before,
+                "source_reset_after": reset_after,
+            }
         return {
+            "ok": True,
             "scan_root": work_root,
-            "input_mode": "patch_snippets_after_apply_failure",
+            "input_mode": "isolated_clean_repo",
             "repo_path": str(repo_path),
             "source_reset_before": reset_before,
             "source_reset_after": reset_after,
-            "patch_apply": apply_details,
-            "snippet_materialization": snippet_details,
         }
-
-    work_root.mkdir(parents=True, exist_ok=True)
-    snippet_details = _write_patch_snippet_repo(work_root, patch_text)
-    return {
-        "scan_root": work_root,
-        "input_mode": "patch_snippets",
-        "repo_path": str(repo_path) if repo_path else "",
-        "snippet_materialization": snippet_details,
-    }
 
 
 def _run_static_scanner(
@@ -315,6 +317,14 @@ def _run_static_scanner(
     base_command = [str(part) for part in config.get("command", [tool, "-r", ".", "-f", "json"])]
     if not base_command:
         return "reject", {"tool": tool, "failure_reason": "empty_command"}
+    if repo_path is None or not repo_path.is_dir():
+        return "reject", {
+            "tool": tool,
+            "failure_reason": "invalid_repo_path",
+            "repo_path": str(repo_path or ""),
+        }
+    if not row["patch"].strip():
+        return "reject", {"tool": tool, "failure_reason": "empty_patch"}
 
     available, availability_signals = _static_tool_available(base_command[0])
     if not available:
@@ -327,42 +337,112 @@ def _run_static_scanner(
 
     artifact_dir = out_dir / "artifacts" / "static" / f"{_safe_filename(row['code_base'])}_{row_index:06d}"
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    report_path = artifact_dir / f"{tool}.json"
-    max_findings = int(config.get("max_findings", config.get("max_new_findings", 0)))
+    before_report_path = artifact_dir / f"{tool}_before.json"
+    after_report_path = artifact_dir / f"{tool}.json"
+    before_report_path.unlink(missing_ok=True)
+    after_report_path.unlink(missing_ok=True)
+    max_new_findings = int(config.get("max_new_findings", config.get("max_findings", 0)))
+
+    prep: Dict[str, Any] = {}
+    patch_apply: Dict[str, Any] = {
+        "applied": False,
+        "method_used": "none",
+        "reason_code": "not_attempted",
+    }
+    before_command: List[str] = []
+    after_command: List[str] = []
+    before_result = None
+    after_result = None
+    before_findings = 0
+    after_findings = 0
+    before_errors = 0
+    after_errors = 0
+    before_parse_error = ""
+    after_parse_error = ""
+    before_parsed = None
+    after_parsed = None
+    failure_reason = ""
 
     with tempfile.TemporaryDirectory(prefix=f"{tool}-row-defense-") as tmp:
         work_root = Path(tmp) / "repo"
-        prep = _prepare_static_workspace(row=row, repo_path=repo_path, work_root=work_root)
-        scan_root = Path(prep["scan_root"])
-        command = (
-            _build_bandit_command(base_command, report_path)
-            if tool == "bandit"
-            else _build_semgrep_command(base_command, report_path)
+        prep = _prepare_static_workspace(repo_path=repo_path, work_root=work_root)
+        if not prep.get("ok"):
+            failure_reason = str(prep.get("failure_reason", "workspace_preparation_failed"))
+        else:
+            before_command = (
+                _build_bandit_command(base_command, before_report_path)
+                if tool == "bandit"
+                else _build_semgrep_command(base_command, before_report_path)
+            )
+            before_result = run_command(before_command, cwd=work_root, timeout_sec=timeout_sec)
+            before_findings, before_errors, before_parse_error, before_parsed = _parse_static_report(
+                before_report_path, tool
+            )
+            if before_parse_error:
+                failure_reason = f"before_{tool}_parse_error"
+
+        if not failure_reason:
+            patch_apply = apply_unified_diff_detailed(work_root, row["patch"])
+            if not patch_apply.get("applied"):
+                failure_reason = "patch_apply_failed"
+
+        if not failure_reason:
+            after_command = (
+                _build_bandit_command(base_command, after_report_path)
+                if tool == "bandit"
+                else _build_semgrep_command(base_command, after_report_path)
+            )
+            after_result = run_command(after_command, cwd=work_root, timeout_sec=timeout_sec)
+            after_findings, after_errors, after_parse_error, after_parsed = _parse_static_report(
+                after_report_path, tool
+            )
+            if after_parse_error:
+                failure_reason = f"after_{tool}_parse_error"
+
+    if before_parsed is not None:
+        atomic_write_json(
+            artifact_dir / f"{tool}_before_parsed.json",
+            before_parsed if isinstance(before_parsed, dict) else {"payload": before_parsed},
         )
-        result = run_command(command, cwd=scan_root, timeout_sec=timeout_sec)
-        findings, errors_count, parse_error, parsed = _parse_static_report(report_path, tool)
+    if after_parsed is not None:
+        atomic_write_json(
+            artifact_dir / f"{tool}_parsed.json",
+            after_parsed if isinstance(after_parsed, dict) else {"payload": after_parsed},
+        )
 
-    # Keep a copy of the scanner output outside the temporary workspace.
-    if parsed is not None:
-        atomic_write_json(artifact_dir / f"{tool}_parsed.json", parsed if isinstance(parsed, dict) else {"payload": parsed})
-
-    decision = "reject" if parse_error or findings > max_findings else "accept"
+    new_findings = None if failure_reason else after_findings - before_findings
+    decision = (
+        "accept"
+        if new_findings is not None and new_findings <= max_new_findings
+        else "reject"
+    )
     signals = {
         "tool": tool,
         **availability_signals,
-        "command": command,
-        "returncode": result.returncode,
+        "repo_path": str(repo_path),
+        "before_command": before_command,
+        "after_command": after_command,
+        "before_returncode": before_result.returncode if before_result else None,
+        "after_returncode": after_result.returncode if after_result else None,
         "timeout_sec": timeout_sec,
-        "findings": findings,
-        "errors_count": errors_count,
-        "parse_error": parse_error,
-        "max_findings": max_findings,
-        "decision_rule": "reject_if_findings_gt_max_findings_or_report_unparseable",
-        "failure_reason": parse_error,
-        "stdout_preview": (result.stdout or "")[:1000],
-        "stderr_preview": (result.stderr or "")[:1000],
+        "before_findings": before_findings,
+        "after_findings": after_findings if after_result else None,
+        "new_findings": new_findings,
+        "before_errors_count": before_errors,
+        "after_errors_count": after_errors if after_result else None,
+        "before_parse_error": before_parse_error,
+        "after_parse_error": after_parse_error,
+        "max_new_findings": max_new_findings,
+        "decision_rule": "accept_if_after_findings_le_before_findings_plus_max_new_findings",
+        "failure_reason": failure_reason,
+        "before_stdout_preview": (before_result.stdout or "")[:1000] if before_result else "",
+        "before_stderr_preview": (before_result.stderr or "")[:1000] if before_result else "",
+        "after_stdout_preview": (after_result.stdout or "")[:1000] if after_result else "",
+        "after_stderr_preview": (after_result.stderr or "")[:1000] if after_result else "",
         "artifact_dir": str(artifact_dir),
-        "report_path": str(report_path),
+        "before_report_path": str(before_report_path),
+        "after_report_path": str(after_report_path),
+        "patch_apply": patch_apply,
         "input_preparation": {
             key: value
             for key, value in prep.items()
@@ -389,21 +469,10 @@ def _evaluate_plugin_row(
     row: Dict[str, Any],
     row_index: int,
     baseline_name: str,
-    baseline_plugin: str,
-    baseline_config: Dict[str, Any],
-    baseline_hash: str,
-    fidelity_mode: str,
-    out_dir: Path,
+    baseline_pool: _ThreadLocalBaselinePool,
     repo_path: Path | None,
 ) -> Tuple[str, Dict[str, Any]]:
-    llm_client = LLMClient(out_dir / "artifacts" / "llm_cache")
-    baseline_obj = get_baseline(baseline_plugin)(
-        baseline_config,
-        llm_client,
-        baseline_hash,
-        out_dir,
-        fidelity_mode,
-    )
+    baseline_obj = baseline_pool.get()
     code_base = row["code_base"]
     label = int(row["label"])
     artifact_instance_id = _artifact_instance_id(code_base, row_index, label)
@@ -438,10 +507,10 @@ def _evaluate_one_row(
     baseline_plugin: str,
     baseline_config: Dict[str, Any],
     baseline_hash: str,
-    fidelity_mode: str,
     out_dir: Path,
     repos_root: Path | None,
     scanner_timeout_sec: int,
+    baseline_pool: _ThreadLocalBaselinePool,
 ) -> Dict[str, Any]:
     t0 = time.time()
     start_ts = _utc_now()
@@ -480,11 +549,7 @@ def _evaluate_one_row(
                 row=row,
                 row_index=row_index,
                 baseline_name=baseline_name,
-                baseline_plugin=baseline_plugin,
-                baseline_config=baseline_config,
-                baseline_hash=baseline_hash,
-                fidelity_mode=fidelity_mode,
-                out_dir=out_dir,
+                baseline_pool=baseline_pool,
                 repo_path=repo_path,
             )
         error = str(signals.get("error") or "")
@@ -655,9 +720,17 @@ def run_defense(
         for idx, row in enumerate(rows)
     ]
     pending = [(idx, row, key) for idx, row, key in indexed_rows if key not in completed]
+    requested_workers = max(1, int(workers))
+    effective_workers = _effective_worker_count(baseline_plugin, requested_workers)
+    if effective_workers != requested_workers:
+        print(
+            f"[run_defense] baseline={baseline_name} requested_workers={requested_workers} "
+            f"effective_workers={effective_workers} reason=single_model_instance",
+            flush=True,
+        )
     print(
         f"[run_defense] start rows={len(rows)} pending={len(pending)} "
-        f"baseline={baseline_name} plugin={baseline_plugin} workers={workers}",
+        f"baseline={baseline_name} plugin={baseline_plugin} workers={effective_workers}",
         flush=True,
     )
 
@@ -670,14 +743,24 @@ def run_defense(
         "baseline_config": baseline_config,
         "fidelity_mode": fidelity_mode,
         "repos_root": str(repos_root or ""),
-        "workers": workers,
+        "workers": effective_workers,
     }
     atomic_write_json(out_dir / "integration_spec.json", integration_spec)
+
+    baseline_pool = _ThreadLocalBaselinePool(
+        lambda: get_baseline(baseline_plugin)(
+            baseline_runtime_config,
+            LLMClient(out_dir / "artifacts" / "llm_cache"),
+            baseline_hash,
+            out_dir,
+            fidelity_mode,
+        )
+    )
 
     write_lock = threading.Lock()
     new_results: List[Dict[str, Any]] = []
     if pending:
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        with ThreadPoolExecutor(max_workers=effective_workers) as executor:
             futures = {
                 executor.submit(
                     _evaluate_one_row,
@@ -689,10 +772,10 @@ def run_defense(
                     baseline_plugin=baseline_plugin,
                     baseline_config=baseline_runtime_config,
                     baseline_hash=baseline_hash,
-                    fidelity_mode=fidelity_mode,
                     out_dir=out_dir,
                     repos_root=repos_root,
                     scanner_timeout_sec=scanner_timeout_sec,
+                    baseline_pool=baseline_pool,
                 ): key
                 for idx, row, key in pending
             }

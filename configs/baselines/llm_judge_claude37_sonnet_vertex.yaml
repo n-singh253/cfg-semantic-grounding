@@ -1,8 +1,0 @@
-name: llm_judge_claude37_sonnet_vertex
-plugin: llm_judge
-provider: anthropic_vertex
-model: claude-sonnet-4@20250514
-mode: raw
-temperature: 0.0
-reject_threshold: 0.5
-allow_provider_fallback: false

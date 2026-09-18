@@ -7,29 +7,29 @@ import json
 import os
 import shutil
 import subprocess
-import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 
 DATASET_OPTIONS: Dict[str, Dict[str, str]] = {
     "swebench_lite": {
         "hf_dataset": "princeton-nlp/SWE-bench_Lite",
-        "output": "data/swebench_lite_local.jsonl",
+        "output_name": "swebench_lite_local.jsonl",
         "repos_env": "CFG_SWEBENCH_LITE_REPOS_DIR",
         "repos_dir": "data/repos/swebench_lite",
         "limit": "300",
     },
     "swebench_pro": {
         "hf_dataset": "princeton-nlp/SWE-bench",
-        "output": "data/swebench_pro_local.jsonl",
+        "output_name": "swebench_pro_local.jsonl",
         "repos_env": "CFG_SWEBENCH_PRO_REPOS_DIR",
         "repos_dir": "data/repos/swebench_pro",
         "limit": "0",
     },
     "swebench_plus": {
         "hf_dataset": "princeton-nlp/SWE-bench_Multimodal",
-        "output": "data/swebench_plus_local.jsonl",
+        "output_name": "swebench_plus_local.jsonl",
         "repos_env": "CFG_SWEBENCH_PLUS_REPOS_DIR",
         "repos_dir": "data/repos/swebench_plus",
         "limit": "0",
@@ -58,10 +58,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", default=env_value("CFG_SWEBENCH_SPLIT", default="test"))
     parser.add_argument("--offset", type=int, default=int(env_value("CFG_SWEBENCH_OFFSET", default="0")))
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--output", default=env_value("CFG_SWEBENCH_OUTPUT"))
     parser.add_argument("--repos-dir", default=env_value("CFG_SWEBENCH_REPOS_DIR"))
     parser.add_argument("--hf-dataset", default=env_value("CFG_SWEBENCH_HF_DATASET"))
     parser.add_argument("--force-reclone", action="store_true")
+    parser.add_argument("--workers", type=int, default=1, help="Number of parallel checkout workers.")
     return parser.parse_args()
 
 
@@ -98,25 +98,49 @@ def run_git(command: List[str], cwd: Path | None = None) -> None:
         raise RuntimeError(f"{' '.join(command)} failed: {details}")
 
 
+def is_valid_git_checkout(path: Path) -> bool:
+    if not path.exists():
+        return False
+    completed = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=str(path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed.returncode == 0 and completed.stdout.strip() == "true"
+
+
+def remove_path(path: Path) -> None:
+    if not path.exists():
+        return
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
 def ensure_checkout(repo_slug: str, base_commit: str, target_dir: Path, force_reclone: bool) -> None:
     repo_url = f"https://github.com/{repo_slug}.git"
-    git_dir = target_dir / ".git"
 
     if target_dir.exists() and force_reclone:
-        shutil.rmtree(target_dir)
+        remove_path(target_dir)
 
-    if target_dir.exists() and not git_dir.exists():
-        for child in target_dir.iterdir():
-            if child.is_dir() and not child.is_symlink():
-                shutil.rmtree(child)
-            else:
-                child.unlink()
+    if target_dir.exists() and not is_valid_git_checkout(target_dir):
+        log("reclone-invalid-checkout", path=target_dir)
+        remove_path(target_dir)
 
-    if not git_dir.exists():
+    if not target_dir.exists():
         target_dir.parent.mkdir(parents=True, exist_ok=True)
         run_git(["git", "clone", repo_url, str(target_dir)])
     else:
-        run_git(["git", "fetch", "--all", "--tags", "--prune"], cwd=target_dir)
+        try:
+            run_git(["git", "fetch", "--all", "--tags", "--prune"], cwd=target_dir)
+        except RuntimeError as exc:
+            log("reclone-fetch-failed", path=target_dir, reason=str(exc).splitlines()[0])
+            remove_path(target_dir)
+            target_dir.parent.mkdir(parents=True, exist_ok=True)
+            run_git(["git", "clone", repo_url, str(target_dir)])
 
     run_git(["git", "checkout", "--force", base_commit], cwd=target_dir)
 
@@ -165,39 +189,75 @@ def write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=True) + "\n")
 
 
+def materialize_row(
+    *,
+    index: int,
+    total: int,
+    row: Dict[str, Any],
+    repos_dir: Path,
+    force_reclone: bool,
+) -> Tuple[int, Dict[str, Any]]:
+    repo_slug = str(row.get("repo") or row.get("repo_id") or "").strip()
+    base_commit = str(row.get("base_commit") or "").strip()
+    instance_id = str(row.get("instance_id") or row.get("id") or f"instance-{index}")
+    if not repo_slug:
+        raise RuntimeError(f"{instance_id}: missing repo slug in downloaded row")
+    if not base_commit:
+        raise RuntimeError(f"{instance_id}: missing base_commit in downloaded row")
+
+    target_dir = repos_dir / instance_id
+    log("checkout", index=f"{index}/{total}", instance_id=instance_id, repo=repo_slug, commit=base_commit[:12])
+    ensure_checkout(repo_slug, base_commit, target_dir, force_reclone)
+    return index, normalize_row(row, target_dir)
+
+
 def main() -> int:
     args = parse_args()
     root = repo_root()
     defaults = DATASET_OPTIONS[args.dataset]
 
     dataset_repos_dir = env_value(defaults["repos_env"], "CFG_SWEBENCH_REPOS_DIR", default=defaults["repos_dir"])
-    output_path = resolve_under_root(args.output or defaults["output"], root)
     repos_dir = resolve_under_root(args.repos_dir or dataset_repos_dir, root)
+    output_path = repos_dir / defaults["output_name"]
     hf_dataset = args.hf_dataset or defaults["hf_dataset"]
     limit = int(args.limit if args.limit is not None else env_value("CFG_SWEBENCH_LIMIT", default=defaults["limit"]))
+    workers = max(1, int(args.workers))
 
-    log("start", dataset=args.dataset, hf_dataset=hf_dataset, split=args.split, offset=args.offset, limit=limit)
+    log("start", dataset=args.dataset, hf_dataset=hf_dataset, split=args.split, offset=args.offset, limit=limit, workers=workers)
     log("paths", output=output_path, repos_dir=repos_dir)
 
     rows = load_dataset_rows(hf_dataset, args.split, args.offset, limit)
-    materialized_rows: List[Dict[str, Any]] = []
+    materialized_rows: List[Dict[str, Any] | None] = [None] * len(rows)
+    if workers == 1:
+        for index, row in enumerate(rows, start=1):
+            _, record = materialize_row(
+                index=index,
+                total=len(rows),
+                row=row,
+                repos_dir=repos_dir,
+                force_reclone=args.force_reclone,
+            )
+            materialized_rows[index - 1] = record
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(
+                    materialize_row,
+                    index=index,
+                    total=len(rows),
+                    row=row,
+                    repos_dir=repos_dir,
+                    force_reclone=args.force_reclone,
+                )
+                for index, row in enumerate(rows, start=1)
+            ]
+            for future in as_completed(futures):
+                index, record = future.result()
+                materialized_rows[index - 1] = record
 
-    for index, row in enumerate(rows, start=1):
-        repo_slug = str(row.get("repo") or row.get("repo_id") or "").strip()
-        base_commit = str(row.get("base_commit") or "").strip()
-        instance_id = str(row.get("instance_id") or row.get("id") or f"instance-{index}")
-        if not repo_slug:
-            raise RuntimeError(f"{instance_id}: missing repo slug in downloaded row")
-        if not base_commit:
-            raise RuntimeError(f"{instance_id}: missing base_commit in downloaded row")
-
-        target_dir = repos_dir / instance_id
-        log("checkout", index=f"{index}/{len(rows)}", instance_id=instance_id, repo=repo_slug, commit=base_commit[:12])
-        ensure_checkout(repo_slug, base_commit, target_dir, args.force_reclone)
-        materialized_rows.append(normalize_row(row, target_dir))
-
-    write_jsonl(output_path, materialized_rows)
-    log("wrote-jsonl", rows=len(materialized_rows), path=output_path)
+    final_rows = [row for row in materialized_rows if row is not None]
+    write_jsonl(output_path, final_rows)
+    log("wrote-jsonl", rows=len(final_rows), path=output_path)
 
     return 0
 

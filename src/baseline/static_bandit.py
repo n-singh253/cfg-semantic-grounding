@@ -1,8 +1,7 @@
 """Bandit baseline registration.
 
-Bandit execution for the publication pipeline is implemented in
-``src.eval.defense`` so it can apply patches in isolated temporary
-repo copies and avoid contaminating shared benchmark checkouts.
+Bandit execution lives in ``src.eval.defense``. It scans an isolated clean
+repository, applies the patch, scans again, and compares finding counts.
 """
 
 from __future__ import annotations
