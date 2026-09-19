@@ -316,15 +316,24 @@ def _run_static_scanner(
 ) -> Tuple[str, Dict[str, Any]]:
     base_command = [str(part) for part in config.get("command", [tool, "-r", ".", "-f", "json"])]
     if not base_command:
-        return "reject", {"tool": tool, "failure_reason": "empty_command"}
+        return "error", {
+            "tool": tool,
+            "failure_reason": "empty_command",
+            "stage_failed": True,
+        }
     if repo_path is None or not repo_path.is_dir():
-        return "reject", {
+        return "error", {
             "tool": tool,
             "failure_reason": "invalid_repo_path",
             "repo_path": str(repo_path or ""),
+            "stage_failed": True,
         }
     if not row["patch"].strip():
-        return "reject", {"tool": tool, "failure_reason": "empty_patch"}
+        return "error", {
+            "tool": tool,
+            "failure_reason": "empty_patch",
+            "stage_failed": True,
+        }
 
     available, availability_signals = _static_tool_available(base_command[0])
     if not available:
@@ -375,11 +384,14 @@ def _run_static_scanner(
                 else _build_semgrep_command(base_command, before_report_path)
             )
             before_result = run_command(before_command, cwd=work_root, timeout_sec=timeout_sec)
-            before_findings, before_errors, before_parse_error, before_parsed = _parse_static_report(
-                before_report_path, tool
-            )
-            if before_parse_error:
-                failure_reason = f"before_{tool}_parse_error"
+            if before_result.returncode == 124:
+                failure_reason = f"before_{tool}_timeout"
+            else:
+                before_findings, before_errors, before_parse_error, before_parsed = (
+                    _parse_static_report(before_report_path, tool)
+                )
+                if before_parse_error:
+                    failure_reason = f"before_{tool}_parse_error"
 
         if not failure_reason:
             patch_apply = apply_unified_diff_detailed(work_root, row["patch"])
@@ -393,11 +405,14 @@ def _run_static_scanner(
                 else _build_semgrep_command(base_command, after_report_path)
             )
             after_result = run_command(after_command, cwd=work_root, timeout_sec=timeout_sec)
-            after_findings, after_errors, after_parse_error, after_parsed = _parse_static_report(
-                after_report_path, tool
-            )
-            if after_parse_error:
-                failure_reason = f"after_{tool}_parse_error"
+            if after_result.returncode == 124:
+                failure_reason = f"after_{tool}_timeout"
+            else:
+                after_findings, after_errors, after_parse_error, after_parsed = (
+                    _parse_static_report(after_report_path, tool)
+                )
+                if after_parse_error:
+                    failure_reason = f"after_{tool}_parse_error"
 
     if before_parsed is not None:
         atomic_write_json(
@@ -411,11 +426,10 @@ def _run_static_scanner(
         )
 
     new_findings = None if failure_reason else after_findings - before_findings
-    decision = (
-        "accept"
-        if new_findings is not None and new_findings <= max_new_findings
-        else "reject"
-    )
+    if failure_reason:
+        decision = "error"
+    else:
+        decision = "accept" if new_findings <= max_new_findings else "reject"
     signals = {
         "tool": tool,
         **availability_signals,
@@ -435,6 +449,7 @@ def _run_static_scanner(
         "max_new_findings": max_new_findings,
         "decision_rule": "accept_if_after_findings_le_before_findings_plus_max_new_findings",
         "failure_reason": failure_reason,
+        "stage_failed": bool(failure_reason),
         "before_stdout_preview": (before_result.stdout or "")[:1000] if before_result else "",
         "before_stderr_preview": (before_result.stderr or "")[:1000] if before_result else "",
         "after_stdout_preview": (after_result.stdout or "")[:1000] if after_result else "",
