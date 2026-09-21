@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -23,14 +24,12 @@ LIVECODEBENCH_REPOS_DIR = Path(
 
 DATA_ROOT = Path(__file__).resolve().parent / "data" / "synthesized_results"
 
-"""    
+SWEBENCH_ROW_DIRS = [
     DATA_ROOT / "Non-Obfuscated/FCV-78_SWE-Bench_Claude-Sonnet-4.6",
     DATA_ROOT / "Non-Obfuscated/FCV-78_SWE-Bench_MINI-Gemini-3",
+    DATA_ROOT / "Non-Obfuscated/FCV_SWE-Bench_OpenHands-Qwen3-Coder-30B",
     DATA_ROOT / "Non-Obfuscated/SWExploit_SWE-Bench_Claude-Sonnet-4.6",
     DATA_ROOT / "Non-Obfuscated/SWExploit_SWE-Bench_MINI-Gemini-3",
-"""
-SWEBENCH_ROW_DIRS = [
-    DATA_ROOT / "Non-Obfuscated/FCV_SWE-Bench_OpenHands-Qwen3-Coder-30B",
     DATA_ROOT / "Non-Obfuscated/SWExploit_SWE-Bench_OpenHands-Qwen3-Coder-30B",
     DATA_ROOT / "Obfuscated/FCV-78_SWE-Bench_MINI-Gemini-3",
     DATA_ROOT / "Obfuscated/FCV-78_SWE-Bench_SWEAgent-Claude-3.7",
@@ -73,13 +72,11 @@ LIVECODEBENCH_ROW_DIRS = [
 
 
 BASELINES = [
-    "llama_guard",
-    "bandit",
     "semgrep",
-    "llm_judge"
+    "bandit",
 ]
 
-WORKERS = 24
+WORKERS = 48
 
 
 # ---- Less commonly edited batch controls. ----
@@ -89,7 +86,7 @@ OUTPUT_ROOT = Path(
 )
 CONFIG_DIR = Path("configs")
 FIDELITY_MODE = "llm"
-SCANNER_TIMEOUT_SEC = 120
+SCANNER_TIMEOUT_SEC = 600
 LIMIT: int | None = None
 RESUME = True
 DRY_RUN = False
@@ -165,6 +162,11 @@ def main() -> int:
     total = sum(len(row_dirs) * len(BASELINES) for _, _, row_dirs in BENCHMARKS)
     current = 0
     start_time = time.time()
+    child_env = os.environ.copy()
+    environment_bin = str(Path(sys.executable).resolve().parent)
+    child_env["PATH"] = os.pathsep.join(
+        [environment_bin, child_env.get("PATH", "")]
+    )
 
     for benchmark, repos_dir, row_dirs in BENCHMARKS:
         if not repos_dir.exists():
@@ -194,7 +196,11 @@ def main() -> int:
                 if DRY_RUN:
                     continue
 
-                result = subprocess.run(command, cwd=Path(__file__).resolve().parent)
+                result = subprocess.run(
+                    command,
+                    cwd=Path(__file__).resolve().parent,
+                    env=child_env,
+                )
                 if result.returncode != 0:
                     failures.append((benchmark, rows_path, baseline, result.returncode))
                     print(

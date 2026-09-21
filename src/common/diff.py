@@ -85,7 +85,20 @@ def _extract_diff_lines(raw: str) -> List[str]:
 
     out: List[str] = []
     started = False
+    file_start = 0
+    skipping_binary = False
     for line in lines[start:]:
+        if skipping_binary:
+            if not line.startswith("diff --git "):
+                continue
+            skipping_binary = False
+        if line.startswith("diff --git "):
+            file_start = len(out)
+        if line == "GIT binary patch" or line.startswith("Binary files "):
+            del out[file_start:]
+            started = bool(out)
+            skipping_binary = True
+            continue
         if line.startswith("```"):
             break
         if (
