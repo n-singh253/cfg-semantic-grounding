@@ -53,10 +53,14 @@ def build_canonical_graph(
 
     cross_edges: List[Dict[str, Any]] = []
     for link in links:
-        subtask_id = str(link.get("subtask_id", ""))
-        if subtask_id not in subtask_id_to_index:
-            continue
-        src_idx = subtask_id_to_index[subtask_id]
+        subtask_index = link.get("subtask_index")
+        if isinstance(subtask_index, int) and 0 <= subtask_index < len(subtasks):
+            src_idx = subtask_index
+        else:
+            subtask_id = str(link.get("subtask_id", ""))
+            if subtask_id not in subtask_id_to_index:
+                continue
+            src_idx = subtask_id_to_index[subtask_id]
         scores = link.get("scores", {}) if isinstance(link.get("scores"), dict) else {}
         for node_id in link.get("node_ids", []):
             if node_id not in node_id_to_index:

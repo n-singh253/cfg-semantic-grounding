@@ -9,7 +9,6 @@ min_candidate_nodes: 1
 
 inputs:
   data_rows: /proj/arise/arise/hj2742/cfg-semantic-grounding-submission/data/synthesized_results/Non-Obfuscated/FCV_LiveCodeBench_OpenHands-Qwen3-Coder-30B/rows.jsonl
-  synthetic_rows: /proj/arise/arise/hj2742/cfg-semantic-grounding-submission/RES/synthetic/fcv_livecodebench_openhands_qwen3_openai/rows_synthetic.jsonl
   data_graph_dir: /proj/arise/arise/hj2742/cfg-semantic-grounding-submission/RES/graphs/real_fcv_livecodebench_openhands_qwen3_openai
   synthetic_graph_dir: /proj/arise/arise/hj2742/cfg-semantic-grounding-submission/RES/graphs/synthetic_fcv_livecodebench_openhands_qwen3_openai
 

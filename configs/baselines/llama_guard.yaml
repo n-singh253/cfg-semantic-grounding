@@ -18,4 +18,4 @@ max_new_tokens: 8
 use_cache: true
 
 # One of: prompt, patch, prompt_and_patch.
-input_field: prompt
+input_field: prompt_and_patch

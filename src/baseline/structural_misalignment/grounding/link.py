@@ -93,6 +93,18 @@ def link_subtasks_to_nodes(
     links = parse_links(result.text, len(subtasks))
     if not links and subtasks:
         links = normalize_links([], len(subtasks))
+    full_ids = {str(node["node_id"]) for node in candidate_nodes}
+    aliases: Dict[str, str | None] = {}
+    for full_id in full_ids:
+        alias = full_id.rsplit("::", 1)[-1]
+        aliases[alias] = full_id if alias not in aliases else None
+    for link in links:
+        resolved = []
+        for node_id in link["node_ids"]:
+            full_id = node_id if node_id in full_ids else aliases.get(node_id)
+            if full_id and full_id not in resolved:
+                resolved.append(full_id)
+        link["node_ids"] = resolved
     metadata = result.to_dict()
     metadata["parsed_links_count"] = len(links)
     return links, metadata

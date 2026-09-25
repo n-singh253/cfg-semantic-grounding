@@ -85,12 +85,12 @@ def _row_identity(row: Dict[str, Any], row_index: int) -> Dict[str, Any]:
 
 def _load_graph_examples(
     *,
-    rows_path: Path,
+    rows_path: Path | None,
     graph_dir: Path,
     source_name: str,
     min_candidate_nodes: int,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    input_rows = load_rows(rows_path)
+    input_rows = load_rows(rows_path) if rows_path is not None else []
     input_by_index = {
         idx: _row_identity(row, idx)
         for idx, row in enumerate(input_rows)
@@ -109,7 +109,11 @@ def _load_graph_examples(
             continue
 
         row_index = int(result.get("row_index", -1))
-        row_info = input_by_index.get(row_index)
+        row_info = (
+            input_by_index.get(row_index)
+            if rows_path is not None
+            else {"code_base": result.get("code_base", ""), "label": result.get("label", -1)}
+        )
         if row_info is None:
             dropped["row_index_not_in_input"] += 1
             continue
@@ -198,9 +202,9 @@ def _load_graph_examples(
 
     report = {
         "source": source_name,
-        "rows_path": str(rows_path),
+        "rows_path": str(rows_path or ""),
         "graph_dir": str(graph_dir),
-        "input_rows": len(input_rows),
+        "input_rows": len(input_rows) if rows_path is not None else len(result_rows),
         "raw_result_rows": len(result_rows),
         "loaded_examples": len(examples),
         "loaded_code_bases": len({example["code_base"] for example in examples}),
@@ -311,7 +315,6 @@ def _result_key(
     method: str,
     model_name: str,
     data_rows_path: Path,
-    synthetic_rows_path: Path,
     data_graph_dir: Path,
     synthetic_graph_dir: Path,
     split: Dict[str, Any],
@@ -323,7 +326,7 @@ def _result_key(
                 "method": method,
                 "model_name": model_name,
                 "data_rows_path": str(data_rows_path),
-                "synthetic_rows_path": str(synthetic_rows_path),
+                "synthetic_results_path": str(synthetic_graph_dir / "results.jsonl"),
                 "data_graph_dir": str(data_graph_dir),
                 "synthetic_graph_dir": str(synthetic_graph_dir),
                 "split_key": split.get("split_key"),
@@ -351,6 +354,32 @@ def _load_graph_for_gnn(example: Dict[str, Any]):
         payload = _artifact_payload(graph_json)
         payload["graph_label"] = int(example["label"])
         graph = build_pyg_heterodata(payload)
+
+    relation = ("subtask", "grounds", "code")
+    if graph[relation].edge_index.numel() == 0:
+        training_path = _path_or_empty(example.get("training_example_path"))
+        graph_json = _path_or_empty(example.get("graph_json_path"))
+        if training_path is not None and graph_json is not None:
+            training = _artifact_payload(training_path)
+            grounding_path = _path_or_empty(training.get("artifact_paths", {}).get("grounding"))
+            if grounding_path is not None:
+                if not grounding_path.is_absolute():
+                    grounding_path = training_path.parent / grounding_path
+                if grounding_path.exists():
+                    nodes = _artifact_payload(graph_json).get("code_nodes", [])
+                    node_indices = {str(node.get("node_id")): index for index, node in enumerate(nodes)}
+                    links = _artifact_payload(grounding_path).get("links", [])
+                    pairs = []
+                    for link in links:
+                        index = link.get("subtask_index")
+                        if not isinstance(index, int) or not 0 <= index < graph["subtask"].num_nodes:
+                            continue
+                        for node_id in link.get("node_ids", []):
+                            target = node_indices.get(str(node_id))
+                            if target is not None:
+                                pairs.append([index, target])
+                    if pairs:
+                        graph[relation].edge_index = torch.tensor(pairs, dtype=torch.long).T.contiguous()
 
     graph.y = torch.tensor([int(example["label"])], dtype=torch.long)
     return graph
@@ -428,7 +457,6 @@ def _run_gnn_eval(
 def run_structural_misalignment_eval(
     *,
     data_rows_path: Path | None = None,
-    synthetic_rows_path: Path | None = None,
     data_graph_dir: Path | None = None,
     synthetic_graph_dir: Path | None = None,
     out_dir: Path,
@@ -460,13 +488,6 @@ def run_structural_misalignment_eval(
         config,
         "data_rows",
         "data_rows_path",
-        base_dir=config_base_dir,
-    )
-    synthetic_rows_path = _resolve_required_path(
-        synthetic_rows_path,
-        config,
-        "synthetic_rows",
-        "synthetic_rows_path",
         base_dir=config_base_dir,
     )
     data_graph_dir = _resolve_required_path(
@@ -503,17 +524,21 @@ def run_structural_misalignment_eval(
         min_candidate_nodes=resolved_min_nodes,
     )
     synthetic_examples, synthetic_report = _load_graph_examples(
-        rows_path=synthetic_rows_path,
+        rows_path=None,
         graph_dir=synthetic_graph_dir,
         source_name="synthetic",
         min_candidate_nodes=resolved_min_nodes,
     )
 
     data_rows = load_rows(data_rows_path)
-    synthetic_rows = load_rows(synthetic_rows_path)
+    synthetic_results = _read_jsonl(synthetic_graph_dir / "results.jsonl")
     data_graph_code_bases = {example["code_base"] for example in data_examples}
     synthetic_graph_code_bases = {example["code_base"] for example in synthetic_examples}
-    eligible_code_bases = sorted(data_graph_code_bases & synthetic_graph_code_bases)
+    synthetic_paired_code_bases = (
+        {example["code_base"] for example in synthetic_examples if example["label"] == 0}
+        & {example["code_base"] for example in synthetic_examples if example["label"] == 1}
+    )
+    eligible_code_bases = sorted(data_graph_code_bases & synthetic_paired_code_bases)
     if len(eligible_code_bases) <= 1:
         raise ValueError(
             "Structural evaluation requires graph examples for at least two shared "
@@ -531,11 +556,12 @@ def run_structural_misalignment_eval(
     split_manifest = {
         **split,
         "data_row_count": len(data_rows),
-        "synthetic_row_count": len(synthetic_rows),
+        "synthetic_row_count": len(synthetic_results),
         "data_row_code_base_count": len({str(row["code_base"]) for row in data_rows}),
-        "synthetic_row_code_base_count": len({str(row["code_base"]) for row in synthetic_rows}),
+        "synthetic_row_code_base_count": len({str(row["code_base"]) for row in synthetic_results}),
         "data_graph_code_base_count": len(data_graph_code_bases),
         "synthetic_graph_code_base_count": len(synthetic_graph_code_bases),
+        "synthetic_paired_code_base_count": len(synthetic_paired_code_bases),
         "eligible_code_base_count": len(eligible_code_bases),
         "eligible_code_bases": eligible_code_bases,
         "excluded_data_graph_only_code_bases": sorted(data_graph_code_bases - synthetic_graph_code_bases),
@@ -545,7 +571,7 @@ def run_structural_misalignment_eval(
         "train_label_counts": dict(Counter(example["label"] for example in train)),
         "test_label_counts": dict(Counter(example["label"] for example in test)),
         "data_row_label_counts": label_counts(data_rows),
-        "synthetic_row_label_counts": label_counts(synthetic_rows),
+        "synthetic_row_label_counts": dict(Counter(int(row["label"]) for row in synthetic_results if row.get("label") in {0, 1})),
     }
     atomic_write_json(out_dir / "artifacts" / "split_manifest.json", split_manifest)
     atomic_write_json(out_dir / "artifacts" / "load_report.json", {"data": data_report, "synthetic": synthetic_report})
@@ -561,7 +587,7 @@ def run_structural_misalignment_eval(
             "config": config,
             "method": method,
             "data_rows_path": str(data_rows_path),
-            "synthetic_rows_path": str(synthetic_rows_path),
+            "synthetic_results_path": str(synthetic_graph_dir / "results.jsonl"),
             "data_graph_dir": str(data_graph_dir),
             "synthetic_graph_dir": str(synthetic_graph_dir),
             "train_ratio": resolved_train_ratio,
@@ -628,7 +654,6 @@ def run_structural_misalignment_eval(
             method=method,
             model_name=model_name,
             data_rows_path=data_rows_path,
-            synthetic_rows_path=synthetic_rows_path,
             data_graph_dir=data_graph_dir,
             synthetic_graph_dir=synthetic_graph_dir,
             split=split,

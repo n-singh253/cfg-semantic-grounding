@@ -27,6 +27,8 @@ DEFAULT_SYSTEM_PROMPT = (
 
 
 def build_subtask_prompt(problem_statement: str, system_prompt: str) -> str:
+    if "{PROBLEM_STATEMENT}" in system_prompt:
+        return system_prompt.replace("{PROBLEM_STATEMENT}", problem_statement)
     return (
         f"{system_prompt}\n\n"
         "Problem statement:\n"
