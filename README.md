@@ -1,4 +1,4 @@
-# CFG Semantic Grounding
+# SIGIL
 
 This repository evaluates defenses against adversarial instructions in software-development tasks. It starts from previously generated prompt/patch pairs for SWE-bench and LiveCodeBench; it does not run coding agents or generate the original attack patches. The available defenses are Bandit, Semgrep, an LLM judge, Llama Guard, and structural misalignment models trained on prompt-to-code graphs.
 
