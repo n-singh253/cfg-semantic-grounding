@@ -238,8 +238,6 @@ def infer_benchmark(code_base: str, source_path: Path | None = None) -> str:
     source = str(source_path or "").lower()
     if raw.startswith("lcb_") or "livecodebench" in source:
         return "livecodebench"
-    if ".lv" in raw or "featurebench" in source:
-        return "featurebench"
     if "__" in raw or "swe-bench" in source or "swebench" in source:
         return "swebench"
     return "unknown"
@@ -247,13 +245,6 @@ def infer_benchmark(code_base: str, source_path: Path | None = None) -> str:
 
 def _swebench_repo_slug_candidates(code_base: str) -> List[Path]:
     match = re.match(r"^(?P<org>[^_]+)__(?P<repo>.+?)-\d+$", code_base)
-    if not match:
-        return []
-    return [Path(match.group("org")) / match.group("repo")]
-
-
-def _featurebench_repo_slug_candidates(code_base: str) -> List[Path]:
-    match = re.match(r"^(?P<org>[^_]+)__(?P<repo>[^.]+)\.", code_base)
     if not match:
         return []
     return [Path(match.group("org")) / match.group("repo")]
@@ -269,7 +260,6 @@ def repo_path_candidates(code_base: str, repos_root: Path) -> List[Path]:
         root / "test" / code_base,
     ]
     candidates.extend(root / rel for rel in _swebench_repo_slug_candidates(code_base))
-    candidates.extend(root / rel for rel in _featurebench_repo_slug_candidates(code_base))
 
     deduped: List[Path] = []
     seen: set[str] = set()
